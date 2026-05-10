@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>MTC-1 | Magnetic Threat Classifier</title>
+<link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">MTC</div>
+  <div>
+    <div class="logo-text">Magnetic Threat Classifier</div>
+    <div class="logo-sub">Phase 1 &mdash; Proof of Concept &nbsp;/&nbsp; v1.0.0</div>
+  </div>
+  <div class="hdr-stat">Accuracy&nbsp;<strong id="hdr-acc">—</strong></div>
+  <div class="hdr-stat">Classes&nbsp;<strong style="color:var(--green)">6</strong></div>
+  <div class="hdr-stat">Estimators&nbsp;<strong style="color:var(--green)">200</strong></div>
+  <div class="status-pill"><span class="live-dot"></span>SYSTEM ONLINE</div>
+</header>
+
+<div class="app">
+  <div class="workspace">
+
+    <!-- ── LEFT: INPUT ── -->
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-head-label"><span>01</span>Sensor Input</div>
+      </div>
+      <div class="panel-body">
+        <div class="section-tag">Magnetic Field Vector</div>
+        <div class="input-grid">
+          <div class="field-group">
+            <label class="field-label">B<em>x</em></label>
+            <input id="inp-bx" class="field-input" type="number" step="0.001" value="0.052" placeholder="µT"/>
+          </div>
+          <div class="field-group">
+            <label class="field-label">B<em>y</em></label>
+            <input id="inp-by" class="field-input" type="number" step="0.001" value="0.041" placeholder="µT"/>
+          </div>
+          <div class="field-group">
+            <label class="field-label">B<em>z</em></label>
+            <input id="inp-bz" class="field-input" type="number" step="0.001" value="0.028" placeholder="µT"/>
+          </div>
+          <div class="field-group">
+            <label class="field-label">Dist<em> m</em></label>
+            <input id="inp-dist" class="field-input" type="number" step="0.1" value="1.5" placeholder="m"/>
+          </div>
+        </div>
+
+        <button class="btn-primary" id="btn-detect" onclick="detect()">Run Detection</button>
+        <button class="btn-secondary" onclick="randomScan()">&#9654; Random Scan (Demo)</button>
+        <button class="btn-secondary" onclick="clearAll()">Clear</button>
+
+        <hr class="divider"/>
+        <div class="section-tag">Detection Result</div>
+
+        <div class="threat-display" id="threat-box">
+          <span class="threat-icon" id="t-icon">&#9673;</span>
+          <div class="threat-level" id="t-level" style="color:var(--sub)">STANDBY</div>
+          <div class="threat-class"  id="t-class">Awaiting sensor data</div>
+          <div class="threat-conf"   id="t-conf"></div>
+        </div>
+
+        <hr class="divider"/>
+        <div class="section-tag">Derived Features</div>
+        <div id="readout-table">
+          <div class="readout-row"><span class="readout-key">MAGNITUDE</span><span class="readout-val" id="r-mag">—</span></div>
+          <div class="readout-row"><span class="readout-key">VARIANCE</span><span class="readout-val"  id="r-var">—</span></div>
+          <div class="readout-row"><span class="readout-key">GRADIENT</span><span class="readout-val"  id="r-grd">—</span></div>
+          <div class="readout-row"><span class="readout-key">DIST EST</span><span class="readout-val"  id="r-dst">—</span></div>
+          <div class="readout-row"><span class="readout-key">X-AXIS POS</span><span class="readout-val"  id="r-posx">—</span></div>
+          <div class="readout-row"><span class="readout-key">Y-AXIS POS</span><span class="readout-val"  id="r-posy">—</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CENTER: RADAR ── -->
+    <div class="center-panel">
+      <div class="radar-wrap">
+        <canvas id="radar-canvas" width="480" height="480"></canvas>
+        <div class="radar-label">Magnetic Field Anomaly Map &mdash; Live Sweep</div>
+      </div>
+      <div class="stats-bar">
+        <div class="stat-cell"><div class="stat-val" id="s-acc">—</div><div class="stat-lbl">Model Accuracy</div></div>
+        <div class="stat-cell"><div class="stat-val" id="s-samples">4,800</div><div class="stat-lbl">Training Samples</div></div>
+        <div class="stat-cell"><div class="stat-val">6</div><div class="stat-lbl">Object Classes</div></div>
+        <div class="stat-cell"><div class="stat-val" id="s-scans">0</div><div class="stat-lbl">Session Scans</div></div>
+      </div>
+    </div>
+
+    <!-- ── RIGHT: CONFIDENCE + LOG ── -->
+    <div class="panel">
+      <div class="panel-head">
+        <div class="panel-head-label"><span>02</span>Classification Output</div>
+      </div>
+      <div class="panel-body">
+        <div class="prob-section">
+          <div class="prob-section-title">Class Probabilities</div>
+          <div id="prob-bars"><div class="log-empty">No data yet...</div></div>
+        </div>
+
+        <hr class="divider"/>
+        <div class="section-tag">Model Insights</div>
+        <div class="readout-row"><span class="readout-key">PRIMARY FEATURE</span><span class="readout-val" style="color:var(--text)">Magnitude</span></div>
+        <div class="readout-row"><span class="readout-key">SECONDARY FEAT.</span><span class="readout-val" style="color:var(--text)">Distance Est</span></div>
+        <div class="readout-row"><span class="readout-key">DECISION MODEL</span><span class="readout-val" style="color:var(--text)">Random Forest</span></div>
+
+        <hr class="divider"/>
+        <div class="section-tag">ML Live Feedback</div>
+        <div class="field-group" style="display:flex;gap:8px;">
+          <select id="inp-train-class" class="field-input" style="flex:1;">
+            <option value="handgun">Handgun</option>
+            <option value="rifle">Rifle</option>
+            <option value="knife">Knife</option>
+            <option value="ied_nail">IED Nail</option>
+            <option value="tool">Tool</option>
+            <option value="clear">Clear</option>
+          </select>
+          <button class="btn-secondary" style="margin:0;width:auto;padding:0 12px;color:var(--green);border-color:var(--green);" onclick="trainSample()">Train</button>
+        </div>
+
+        <hr class="divider"/>
+        <div class="section-tag">Detection Log</div>
+        <div id="log-list"><div class="log-empty">No detections this session.</div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const THREAT_COLORS = {
+  CRITICAL:'#ff1a44', HIGH:'#ff3355', LOW:'#ff8c42', NONE:'#00e87a'
+};
+const CLASS_COLORS = {
+  handgun:'#ff3355', knife:'#ff6633', rifle:'#ff1a44',
+  ied_nail:'#ff0033', tool:'#ff8c42', clear:'#00e87a'
+};
+let scans = 0;
+let sweepAngle = 0;
+let animId = null;
+let lastResult = null;
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+fetch('/api/stats').then(r=>r.json()).then(s=>{
+  const a = s.accuracy+'%';
+  document.getElementById('hdr-acc').textContent = a;
+  document.getElementById('s-acc').textContent   = a;
+  document.getElementById('s-samples').textContent = s.training_samples.toLocaleString();
+});
+window.addEventListener('load', () => { startRadarIdle(); });
+
+// ── Detect ────────────────────────────────────────────────────────────────────
+async function detect(){
+  const body={
+    Bx:      +document.getElementById('inp-bx').value||0,
+    By:      +document.getElementById('inp-by').value||0,
+    Bz:      +document.getElementById('inp-bz').value||0,
+    distance:+document.getElementById('inp-dist').value||1
+  };
+  setScanning(true);
+  const res  = await fetch('/api/detect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const data = await res.json();
+  setScanning(false);
+  renderAll(data, body.Bx, body.By, body.Bz);
+}
+
+async function randomScan(){
+  setScanning(true);
+  const res  = await fetch('/api/random',{method:'POST'});
+  const data = await res.json();
+  setScanning(false);
+  if(data.raw){
+    document.getElementById('inp-bx').value   = data.raw.Bx;
+    document.getElementById('inp-by').value   = data.raw.By;
+    document.getElementById('inp-bz').value   = data.raw.Bz;
+    document.getElementById('inp-dist').value = data.raw.distance;
+    renderAll(data, data.raw.Bx, data.raw.By, data.raw.Bz);
+  }
+}
+
+function renderAll(data, Bx, By, Bz){
+  lastResult = data;
+  renderThreat(data);
+  renderReadouts(data);
+  renderProbBars(data.all_probs);
+  addLog(data);
+  drawRadar(Bx, By, Bz, data.color);
+  scans++;
+  document.getElementById('s-scans').textContent = scans;
+}
+
+// ── Threat Box ────────────────────────────────────────────────────────────────
+const ICONS = {CRITICAL:'&#9762;', HIGH:'&#9888;', LOW:'&#9888;', NONE:'&#10003;'};
+function renderThreat(data){
+  const box = document.getElementById('threat-box');
+  box.style.borderColor = data.color;
+  box.style.boxShadow   = `0 0 30px ${data.color}22, inset 0 0 30px ${data.color}06`;
+  box.style.color       = data.color;
+  document.getElementById('t-icon').innerHTML  = ICONS[data.threat]||'?';
+  document.getElementById('t-level').textContent = data.threat;
+  document.getElementById('t-level').style.color = data.color;
+  document.getElementById('t-class').textContent = data.label.replace('_',' ').toUpperCase();
+  document.getElementById('t-conf').innerHTML  = `Confidence: <strong>${data.confidence.toFixed(1)}%</strong>`;
+}
+
+// ── Feature Readouts ──────────────────────────────────────────────────────────
+function renderReadouts(data){
+  const f = data.features || {};
+  const fmt = v => v !== undefined ? v.toExponential(3) : '—';
+  document.getElementById('r-mag').textContent = fmt(f.magnitude) + ' µT';
+  document.getElementById('r-var').textContent = fmt(f.variance);
+  document.getElementById('r-grd').textContent = fmt(f.gradient);
+  document.getElementById('r-dst').textContent = (f.distance_est||0).toFixed(2) + ' m';
+  
+  // Calculate spatial positioning from Bx, By
+  const mag = f.magnitude || 1;
+  const dist = f.distance_est || 1;
+  const x = (f.Bx / mag) * dist;
+  const y = (f.By / mag) * dist;
+  document.getElementById('r-posx').textContent = (x > 0 ? '+' : '') + x.toFixed(2) + ' m';
+  document.getElementById('r-posy').textContent = (y > 0 ? '+' : '') + y.toFixed(2) + ' m';
+}
+
+// ── Probability Bars ──────────────────────────────────────────────────────────
+function renderProbBars(probs){
+  const sorted = Object.entries(probs).sort((a,b)=>b[1]-a[1]);
+  document.getElementById('prob-bars').innerHTML = sorted.map(([cls,pct])=>`
+    <div class="prob-row">
+      <span class="prob-name">${cls.replace('_',' ')}</span>
+      <div class="prob-track"><div class="prob-fill" style="width:${pct}%;background:${CLASS_COLORS[cls]||'#888'}"></div></div>
+      <span class="prob-pct">${pct.toFixed(1)}%</span>
+    </div>`).join('');
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+function addLog(data){
+  const list = document.getElementById('log-list');
+  const empty = list.querySelector('.log-empty');
+  if(empty) empty.remove();
+  const t = new Date().toLocaleTimeString('en',{hour12:false});
+  const el = document.createElement('div');
+  el.className = 'log-entry';
+  el.innerHTML = `
+    <div class="log-bullet" style="background:${data.color}"></div>
+    <div class="log-body">
+      <div class="log-class" style="color:${data.color}">${data.label.replace('_',' ')}</div>
+      <div class="log-threat" style="color:${data.color}">${data.threat}</div>
+    </div>
+    <div style="text-align:right">
+      <div class="log-conf">${data.confidence.toFixed(0)}%</div>
+      <div class="log-time">${t}</div>
+    </div>`;
+  list.prepend(el);
+}
+
+// ── Scanning state ────────────────────────────────────────────────────────────
+function setScanning(on){
+  const btn = document.getElementById('btn-detect');
+  btn.textContent = on ? 'Scanning...' : 'Run Detection';
+  btn.disabled    = on;
+  if(on){ document.getElementById('t-level').textContent='SCANNING'; }
+}
+
+function clearAll(){
+  ['inp-bx','inp-by','inp-bz','inp-dist'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('threat-box').style.cssText='';
+  document.getElementById('t-icon').innerHTML='&#9673;';
+  document.getElementById('t-level').textContent='STANDBY';
+  document.getElementById('t-level').style.color='var(--sub)';
+  document.getElementById('t-class').textContent='Awaiting sensor data';
+  document.getElementById('t-conf').textContent='';
+  ['r-mag','r-var','r-grd','r-dst','r-posx','r-posy'].forEach(id=>document.getElementById(id).textContent='—');
+  document.getElementById('prob-bars').innerHTML='<div class="log-empty">No data yet...</div>';
+  startRadarIdle();
+}
+
+// ── Live Training ─────────────────────────────────────────────────────────────
+async function trainSample() {
+  const btn = event.target;
+  const originalText = btn.textContent;
+  btn.textContent = '...';
+  btn.disabled = true;
+
+  const body = {
+    Bx:      +document.getElementById('inp-bx').value||0,
+    By:      +document.getElementById('inp-by').value||0,
+    Bz:      +document.getElementById('inp-bz').value||0,
+    distance:+document.getElementById('inp-dist').value||1,
+    label:   document.getElementById('inp-train-class').value
+  };
+
+  try {
+    const res = await fetch('/api/train', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if(data.success) {
+      document.getElementById('s-samples').textContent = data.new_count.toLocaleString();
+      btn.textContent = 'DONE';
+      btn.style.background = 'var(--green)';
+      btn.style.color = '#000';
+    }
+  } catch(e) {
+    btn.textContent = 'ERR';
+  }
+
+  setTimeout(() => {
+    btn.textContent = originalText;
+    btn.disabled = false;
+    btn.style.background = '';
+    btn.style.color = '';
+  }, 1500);
+}
+
+// ── Radar Canvas ──────────────────────────────────────────────────────────────
+const canvas = document.getElementById('radar-canvas');
+const ctx    = canvas.getContext('2d');
+// Use actual rendered size so canvas is never blank on first paint
+const CX = canvas.width/2, CY = canvas.height/2, R = CX - 24;
+
+function startRadarIdle(){
+  if(animId) cancelAnimationFrame(animId);
+  // draw first frame immediately so canvas is never blank
+  drawRadarIdle();
+  (function loop(){
+    sweepAngle = (sweepAngle + 0.014) % (Math.PI*2);
+    drawRadarIdle();
+    animId = requestAnimationFrame(loop);
+  })();
+}
+
+function drawRadarIdle(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // fill so it's never pure black void
+  ctx.fillStyle='#060810'; ctx.beginPath(); ctx.arc(CX,CY,R+20,0,Math.PI*2); ctx.fill();
+  drawRadarBase('#00994f');
+  // faint target blips to show life
+  [[CX+R*0.3, CY-R*0.4],[CX-R*0.5,CY+R*0.2]].forEach(([x,y])=>{
+    ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2);
+    ctx.fillStyle='rgba(0,232,122,0.35)'; ctx.fill();
+  });
+  drawSweep('#00e87a');
+}
+
+function drawRadarBase(ringColor){
+  ctx.fillStyle = '#060810';
+  ctx.beginPath(); ctx.arc(CX,CY,R,0,Math.PI*2); ctx.fill();
+
+  // rings
+  [1,.67,.33].forEach(f=>{
+    ctx.beginPath();
+    ctx.arc(CX,CY,R*f,0,Math.PI*2);
+    ctx.strokeStyle = ringColor+'44';
+    ctx.lineWidth   = 1;
+    ctx.stroke();
+  });
+  // crosshairs
+  ctx.strokeStyle = ringColor+'33';
+  ctx.lineWidth   = 1;
+  ctx.beginPath(); ctx.moveTo(CX-R,CY); ctx.lineTo(CX+R,CY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(CX,CY-R); ctx.lineTo(CX,CY+R); ctx.stroke();
+
+  // clip ring border
+  ctx.beginPath(); ctx.arc(CX,CY,R,0,Math.PI*2); ctx.strokeStyle=ringColor+'66'; ctx.lineWidth=1.5; ctx.stroke();
+}
+
+function drawSweep(color){
+  const grad = ctx.createConicalGradient
+    ? null : null; // fallback: manual arc gradient
+  ctx.save();
+  ctx.translate(CX,CY);
+  ctx.rotate(sweepAngle);
+  const trail = ctx.createLinearGradient(-R,0,R,0);
+  trail.addColorStop(0,'transparent');
+  trail.addColorStop(1,color+'88');
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.arc(0,0,R,-Math.PI*0.5,0,false);
+  ctx.fillStyle = color+'18'; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(R,0);
+  ctx.strokeStyle = color+'cc'; ctx.lineWidth=2; ctx.stroke();
+  ctx.restore();
+}
+
+function drawRadar(Bx, By, Bz, hexColor){
+  if(animId){ cancelAnimationFrame(animId); animId=null; }
+  const mag = Math.sqrt(Bx*Bx+By*By+Bz*Bz);
+  const nx  = Math.max(-1,Math.min(1,Bx/(mag||1)));
+  const ny  = Math.max(-1,Math.min(1,By/(mag||1)));
+  const px  = CX + nx*R*0.55;
+  const py  = CY - ny*R*0.55;
+  const col = hexColor || '#ff3355';
+
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  drawRadarBase(col);
+
+  // anomaly halo
+  const halo = ctx.createRadialGradient(px,py,0,px,py,R*0.45);
+  halo.addColorStop(0,col+'55'); halo.addColorStop(1,'transparent');
+  ctx.fillStyle=halo; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // anomaly dot
+  ctx.beginPath(); ctx.arc(px,py,8,0,Math.PI*2);
+  ctx.fillStyle=col; ctx.fill();
+  ctx.beginPath(); ctx.arc(px,py,14,0,Math.PI*2);
+  ctx.strokeStyle=col+'88'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.beginPath(); ctx.arc(px,py,22,0,Math.PI*2);
+  ctx.strokeStyle=col+'33'; ctx.lineWidth=1; ctx.stroke();
+
+  // dashed lines to centre
+  ctx.setLineDash([4,4]);
+  ctx.strokeStyle=col+'55'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(CX,CY); ctx.lineTo(px,py); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // magnitude label
+  ctx.fillStyle=col+'bb'; ctx.font='600 11px JetBrains Mono,monospace';
+  ctx.fillText(`B=${mag.toFixed(4)} µT`, 12, canvas.height-12);
+
+  // sweep continues
+  (function loop(){
+    sweepAngle=(sweepAngle+0.012)%(Math.PI*2);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    drawRadarBase(col);
+    const h2=ctx.createRadialGradient(px,py,0,px,py,R*0.45);
+    h2.addColorStop(0,col+'44'); h2.addColorStop(1,'transparent');
+    ctx.fillStyle=h2; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.beginPath();ctx.arc(px,py,8,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();
+    ctx.beginPath();ctx.arc(px,py,14,0,Math.PI*2);ctx.strokeStyle=col+'88';ctx.lineWidth=1.5;ctx.stroke();
+    ctx.setLineDash([4,4]);ctx.strokeStyle=col+'44';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(CX,CY);ctx.lineTo(px,py);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle=col+'99';ctx.font='600 11px JetBrains Mono,monospace';
+    ctx.fillText(`B=${mag.toFixed(4)} µT`,12,canvas.height-12);
+    drawSweep(col);
+    animId=requestAnimationFrame(loop);
+  })();
+}
+</script>
+</body>
+</html>

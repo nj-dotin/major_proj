@@ -1,0 +1,40 @@
+{
+  "accuracy": 96.56,
+  "n_classes": 6,
+  "classes": [
+    "clear",
+    "handgun",
+    "ied_nail",
+    "knife",
+    "rifle",
+    "tool"
+  ],
+  "threat_map": {
+    "handgun": "HIGH",
+    "knife": "HIGH",
+    "rifle": "HIGH",
+    "ied_nail": "CRITICAL",
+    "tool": "LOW",
+    "clear": "NONE"
+  },
+  "features": [
+    "Bx",
+    "By",
+    "Bz",
+    "magnitude",
+    "variance",
+    "gradient",
+    "distance_est"
+  ],
+  "n_estimators": 200,
+  "training_samples": 3848,
+  "test_samples": 960,
+  "per_class_f1": {
+    "clear": 100.0,
+    "handgun": 91.1,
+    "ied_nail": 100.0,
+    "knife": 99.1,
+    "rifle": 98.4,
+    "tool": 91.0
+  }
+}
