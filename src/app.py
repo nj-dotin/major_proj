@@ -183,10 +183,27 @@ def api_train():
     # Append to dataset
     csv_path = os.path.join(ROOT, "data", "weapon_magnetic.csv")
     if os.path.exists(csv_path):
+        features = compute_features(Bx, By, Bz, distance)
+        threat = MODEL_STATS["threat_map"].get(label, "NONE")
+        
+        # Schema: Bx, By, Bz, magnitude, variance, gradient, distance_est, true_distance, angle_deg, label, threat_level
+        row = [
+            round(Bx, 6),
+            round(By, 6),
+            round(Bz, 6),
+            round(features[3], 6),
+            round(features[4], 8),
+            round(features[5], 8),
+            round(features[6], 4),
+            round(distance, 3),
+            0.0,  # angle_deg (dummy value since we don't have it live)
+            label,
+            threat
+        ]
+        
         with open(csv_path, "a", newline='') as f:
             writer = csv.writer(f)
-            # Schema: label, mass_kg, distance_m, Bx, By, Bz
-            writer.writerow([label, 0.0, distance, Bx, By, Bz])
+            writer.writerow(row)
 
     # Increment stats
     MODEL_STATS["training_samples"] += 1
