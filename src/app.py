@@ -15,6 +15,7 @@ import os, json, random, csv
 import numpy as np
 import joblib
 from flask import Flask, render_template, request, jsonify
+from motion_utils import calculate_motion
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 BASE   = os.path.dirname(os.path.abspath(__file__))
@@ -38,6 +39,11 @@ with open(os.path.join(MODEL, "model_stats.json")) as f:
 
 FEATURES = MODEL_STATS["features"]
 print(f"[BOOT] Model ready. Classes: {le.classes_}")
+
+# Persistent simulation state
+SIM_STATE = {
+    "last_pos": None  # (dist, angle)
+}
 
 # ── Colour / alert config ──────────────────────────────────────────────────────
 THREAT_CONFIG = {
@@ -98,6 +104,7 @@ def predict(features_raw):
         "icon":        tc["icon"],
         "all_probs":   all_probs,
         "features":    dict(zip(FEATURES, [round(v, 6) for v in features_raw])),
+        "is_dynamic":  False # Default, will be updated in routes
     }
 
 
@@ -126,6 +133,15 @@ def api_detect():
 
     features = compute_features(Bx, By, Bz, distance)
     result   = predict(features)
+    
+    # Motion Logic (Assume angle 0 if not provided)
+    angle = float(data.get("angle", 0))
+    curr_pos = (distance * np.cos(np.radians(angle)), distance * np.sin(np.radians(angle)))
+    
+    if SIM_STATE["last_pos"]:
+        result["is_dynamic"] = calculate_motion(SIM_STATE["last_pos"], curr_pos)
+    
+    SIM_STATE["last_pos"] = curr_pos
     return jsonify(result)
 
 
@@ -162,8 +178,19 @@ def api_random():
 
     features = compute_features(Bx, By, Bz, distance)
     result   = predict(features)
+    
+    # Generate random angle for radar
+    angle = random.uniform(0, 360)
+    curr_pos = (distance * np.cos(np.radians(angle)), distance * np.sin(np.radians(angle)))
+    
+    if SIM_STATE["last_pos"]:
+        # Higher threshold for random demo scans to avoid jitter being called motion
+        result["is_dynamic"] = calculate_motion(SIM_STATE["last_pos"], curr_pos, threshold=0.5)
+    
+    SIM_STATE["last_pos"] = curr_pos
+    
     # Attach raw sensor values for display
-    result["raw"] = {"Bx": Bx, "By": By, "Bz": Bz, "distance": distance}
+    result["raw"] = {"Bx": Bx, "By": By, "Bz": Bz, "distance": distance, "angle": angle}
     return jsonify(result)
 
 

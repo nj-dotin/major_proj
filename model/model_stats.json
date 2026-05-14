@@ -27,7 +27,7 @@
     "distance_est"
   ],
   "n_estimators": 200,
-  "training_samples": 3851,
+  "training_samples": 3857,
   "test_samples": 960,
   "per_class_f1": {
     "clear": 100.0,
