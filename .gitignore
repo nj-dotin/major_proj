@@ -1,2 +1,27 @@
 /how.md
 /skills
+
+# Python & Virtual Environments
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# PlatformIO & Embedded Builds
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Environment & Secrets
+.env
+*.local
+
+# System & IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
