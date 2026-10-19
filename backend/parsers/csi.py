@@ -20,7 +20,8 @@ class CSIProcessor:
                 rssi_dbm: Optional[int], 
                 csi_packet_count: int, 
                 subcarrier_amplitudes: Optional[List[float]] = None,
-                now_ts: float = 0.0) -> WiFiMetrics:
+                now_ts: float = 0.0,
+                receiver_id: str = "rx1") -> WiFiMetrics:
         """
         Processes CSI and RSSI data.
         """
@@ -28,7 +29,12 @@ class CSIProcessor:
         
         # Calculate subcarrier variance if subcarriers provided
         variance: Optional[float] = None
+        has_csi = False
+        format_str = "RAW_RSSI_ONLY"
+
         if subcarrier_amplitudes and len(subcarrier_amplitudes) > 1:
+            has_csi = True
+            format_str = f"SUBCA_AMP_VAR ({len(subcarrier_amplitudes)} SC)"
             mean_amp = sum(subcarrier_amplitudes) / len(subcarrier_amplitudes)
             variance = sum((a - mean_amp) ** 2 for a in subcarrier_amplitudes) / len(subcarrier_amplitudes)
             variance = round(variance, 4)
@@ -47,10 +53,18 @@ class CSIProcessor:
                 motion_heuristic = "QUIET"
                 
         return WiFiMetrics(
+            receiver_id=receiver_id,
             rssi_dbm=rssi_dbm,
+            raw_rssi=rssi_dbm,
+            csi_available=has_csi,
+            feature_format=format_str,
             csi_packet_count=csi_packet_count,
             csi_packet_rate=self.packet_rate,
             csi_amplitude_variance=variance,
+            derived_variance=variance,
+            packet_loss_pct=0.0,
+            timestamp_quality="GOOD" if now_ts > 0 else "STALE",
+            connection_status="CONNECTED" if rssi_dbm is not None else "OFFLINE",
             motion_heuristic=motion_heuristic,
             is_model_inferred=False # Explicitly unvalidated
         )

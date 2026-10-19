@@ -9,6 +9,7 @@ Provides:
 
 import asyncio
 import os
+import time
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -171,6 +172,18 @@ def api_ingest_telemetry(packet: dict):
 
 # ── Session Management Endpoints ───────────────────────────────────────────
 
+@app.get("/api/session/status")
+def api_session_status():
+    duration = 0.0
+    if telemetry_buffer.is_recording and telemetry_buffer.recording_started_at:
+        duration = round(time.time() - telemetry_buffer.recording_started_at, 2)
+    return {
+        "recording": telemetry_buffer.is_recording,
+        "sample_count": len(telemetry_buffer.recorded_sessions),
+        "duration_sec": duration,
+        "buffer_size": len(telemetry_buffer.history)
+    }
+
 @app.post("/api/session/start")
 def api_session_start():
     res = telemetry_buffer.start_recording()
@@ -228,6 +241,30 @@ async def websocket_telemetry_endpoint(websocket: WebSocket):
         SYSTEM_STATE["active_websockets"].discard(websocket)
         logger.info(f"WebSocket client disconnected. Total clients: {len(SYSTEM_STATE['active_websockets'])}")
 
+# ── Spatial Calibration Endpoints ──────────────────────────────────────────
+
+@app.get("/api/calibration/spatial")
+def api_get_spatial_calibration():
+    state = live_hardware_manager.current_state if not SYSTEM_STATE["is_demo_mode"] else demo_simulator.generate_tick()
+    return {
+        "rx1_position": state.rx1_position,
+        "rx2_position": state.rx2_position,
+        "tx_position": state.tx_position,
+        "radar_position": state.radar_position
+    }
+
+@app.post("/api/calibration/spatial")
+def api_update_spatial_calibration(config: dict):
+    if "rx1_position" in config:
+        live_hardware_manager.current_state.rx1_position = config["rx1_position"]
+    if "rx2_position" in config:
+        live_hardware_manager.current_state.rx2_position = config["rx2_position"]
+    if "tx_position" in config:
+        live_hardware_manager.current_state.tx_position = config["tx_position"]
+    if "radar_position" in config:
+        live_hardware_manager.current_state.radar_position = config["radar_position"]
+    return {"success": True, "message": "Spatial calibration updated"}
+
 # ── Dashboard UI Serving ───────────────────────────────────────────────────
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -243,3 +280,12 @@ def get_dashboard():
         with open(index_file, "r", encoding="utf-8") as f:
             return f.read()
     return "<h1>NewVision Dashboard Loading...</h1>"
+
+@app.get("/newview", response_class=HTMLResponse)
+def get_newview():
+    newview_file = os.path.join(DASHBOARD_DIR, "newview.html")
+    if os.path.exists(newview_file):
+        with open(newview_file, "r", encoding="utf-8") as f:
+            return f.read()
+    return "<h1>NewView Spatial Workspace Loading...</h1>"
+

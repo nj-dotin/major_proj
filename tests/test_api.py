@@ -41,10 +41,20 @@ def test_mode_toggle():
     assert r3.json()["is_demo_mode"] == init_mode
 
 def test_session_lifecycle_and_export():
+    # Check status initially
+    r_stat = client.get("/api/session/status")
+    assert r_stat.status_code == 200
+    assert "recording" in r_stat.json()
+
     # Start session
     r_start = client.post("/api/session/start")
     assert r_start.status_code == 200
     assert r_start.json()["status"] == "RECORDING_STARTED"
+
+    # Status during recording
+    r_stat2 = client.get("/api/session/status")
+    assert r_stat2.status_code == 200
+    assert r_stat2.json()["recording"] is True
 
     # Fetch telemetry to populate session
     client.get("/api/telemetry")
@@ -54,6 +64,7 @@ def test_session_lifecycle_and_export():
     r_stop = client.post("/api/session/stop")
     assert r_stop.status_code == 200
     assert r_stop.json()["status"] == "RECORDING_STOPPED"
+
 
     # Export JSON
     r_json = client.get("/api/session/export/json")
@@ -80,3 +91,29 @@ def test_dashboard_html_served():
     assert response.status_code == 200
     assert "NEWVISION" in response.text
     assert "radarCanvas" in response.text
+
+def test_newview_html_served():
+    response = client.get("/newview")
+    assert response.status_code == 200
+    assert "NEWVIEW" in response.text
+    assert "spatialCanvas" in response.text
+    assert "2D PLAN" in response.text
+    assert "3D ORBIT" in response.text
+
+def test_spatial_calibration_endpoints():
+    # GET spatial calibration
+    r_get = client.get("/api/calibration/spatial")
+    assert r_get.status_code == 200
+    data = r_get.json()
+    assert "rx1_position" in data
+    assert "radar_position" in data
+
+    # POST spatial calibration update
+    new_cfg = {
+        "rx1_position": {"x": -2.0, "y": 3.0},
+        "tx_position": {"x": 0.0, "y": 5.0}
+    }
+    r_post = client.post("/api/calibration/spatial", json=new_cfg)
+    assert r_post.status_code == 200
+    assert r_post.json()["success"] is True
+

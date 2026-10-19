@@ -20,13 +20,27 @@ class DeviceDiagnostics(BaseModel):
     packet_rate_hz: float = 0.0
 
 class WiFiMetrics(BaseModel):
+    receiver_id: str = Field(default="rx1", description="Receiver identifier: 'rx1' (Radar node) or 'rx2' (Mag node)")
     rssi_dbm: Optional[int] = Field(default=None, description="Wi-Fi RSSI in dBm")
+    raw_rssi: Optional[int] = Field(default=None, description="Unfiltered raw RSSI measurement")
+    csi_available: bool = Field(default=False, description="Explicit flag: True only if actual CSI subcarrier data is captured")
+    feature_format: str = Field(
+        default="RAW_RSSI_ONLY", 
+        description="Feature format: RAW_RSSI_ONLY, SUBCA_AMP_VAR, or FULL_CSI_SUBCARRIERS"
+    )
     csi_packet_count: int = Field(default=0, description="Total CSI frames captured")
     csi_packet_rate: float = Field(default=0.0, description="CSI packets/sec")
     csi_amplitude_variance: Optional[float] = Field(
         default=None, 
         description="Variance across subcarrier amplitudes (motion metric)"
     )
+    derived_variance: Optional[float] = Field(
+        default=None,
+        description="Derived signal variance over rolling window"
+    )
+    packet_loss_pct: float = Field(default=0.0, description="Estimated packet loss percentage")
+    timestamp_quality: str = Field(default="GOOD", description="Timestamp quality: GOOD, JITTER, STALE, DISCONNECTED")
+    connection_status: str = Field(default="CONNECTED", description="Connection status: CONNECTED, DEGRADED, OFFLINE")
     motion_heuristic: str = Field(
         default="QUIET", 
         description="Wi-Fi motion heuristic: QUIET, SUBTLE, ACTIVE. Not a validated coordinate detector."
@@ -54,6 +68,9 @@ class RadarTelemetry(BaseModel):
     raw_frame_hex: Optional[str] = None
     parser_errors: int = 0
     sensor_status: str = Field(default="ACTIVE", description="ACTIVE, NO_DATA, DISCONNECTED")
+    data_quality: str = Field(default="HIGH", description="Quality: HIGH, DEGRADED, NO_TARGETS, DISCONNECTED")
+    connection_status: str = Field(default="CONNECTED", description="CONNECTED, DEGRADED, OFFLINE")
+    track_history: List[Dict[str, Any]] = Field(default_factory=list, description="Historical target track points")
 
 class MagnetometerTelemetry(BaseModel):
     sensor_chip: str = Field(default="UNKNOWN", description="HMC5883L, QMC5883L, MPU9250, MPU6050_NO_MAG, SIMULATED")
@@ -100,8 +117,17 @@ class FusionState(BaseModel):
         description="NONE, ELEVATED_FERROUS, UNKNOWN_ANOMALY, DEMO_SIMULATED"
     )
     explainable_summary: str = "All sensor streams within ambient baseline."
+    combined_output: str = Field(default="All sensor streams within ambient baseline.")
+    radar_evidence: List[str] = Field(default_factory=list, description="Radar-only observations")
+    rx1_evidence: List[str] = Field(default_factory=list, description="Receiver 1 Wi-Fi evidence")
+    rx2_evidence: List[str] = Field(default_factory=list, description="Receiver 2 Wi-Fi evidence")
     supporting_sensors: List[str] = Field(default_factory=list)
     conflicting_sensors: List[str] = Field(default_factory=list)
+    confidence_score: Optional[float] = Field(default=None, description="Confidence percentage where justified")
+    uncertainty_note: str = Field(
+        default="Wi-Fi sensing indicates activity heuristic only. Coordinates provided solely by LD2450 radar.",
+        description="Explicit limitation of sensing evidence"
+    )
     freshness: Dict[str, float] = Field(default_factory=dict, description="Age in seconds for each sensor stream")
     tracked_target_count: int = 0
     closest_target_distance_m: Optional[float] = None
@@ -132,3 +158,8 @@ class SystemConsolidatedState(BaseModel):
     magnetometer: MagnetometerTelemetry = Field(default_factory=MagnetometerTelemetry)
     mtc: MTCInference = Field(default_factory=MTCInference)
     fusion: FusionState = Field(default_factory=FusionState)
+    # Physical sensor spatial calibration positions (in meters)
+    rx1_position: Dict[str, float] = Field(default_factory=lambda: {"x": -0.8, "y": 0.0, "z": 1.0})
+    rx2_position: Dict[str, float] = Field(default_factory=lambda: {"x": 0.8, "y": 0.0, "z": 1.0})
+    tx_position: Dict[str, float] = Field(default_factory=lambda: {"x": 0.0, "y": -0.2, "z": 1.0})
+    radar_position: Dict[str, float] = Field(default_factory=lambda: {"x": 0.0, "y": 0.0, "z": 1.2})

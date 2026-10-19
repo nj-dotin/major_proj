@@ -70,6 +70,7 @@ class SensorFusionEngine:
 
         # 1. Evaluate Radar Tracking
         radar_detected_targets = False
+        radar_evidence: List[str] = []
         if radar_active and radar and radar.targets:
             target_count = len(radar.targets)
             valid_targets = [t for t in radar.targets if t.is_valid]
@@ -79,6 +80,10 @@ class SensorFusionEngine:
                 closest_distance = closest_target.distance_m
                 top_speed = closest_target.speed_ms
                 
+                radar_evidence.append(f"LD2450 tracking {target_count} target(s)")
+                radar_evidence.append(f"Primary target at range {closest_distance}m (X: {closest_target.x_m}m, Y: {closest_target.y_m}m)")
+                radar_evidence.append(f"Radial velocity: {top_speed:+.2f} m/s ({closest_target.speed_cms} cm/s)")
+                
                 if abs(closest_target.speed_ms) > 0.15:
                     presence_state = "MOVING_TARGET"
                     supporting.append(f"Radar tracking {target_count} moving target(s) (closest: {closest_distance}m at {top_speed}m/s)")
@@ -86,34 +91,52 @@ class SensorFusionEngine:
                     presence_state = "STATIONARY_PRESENCE"
                     supporting.append(f"Radar tracking {target_count} stationary target(s) at {closest_distance}m")
             else:
+                radar_evidence.append("Radar active with 0 valid targets")
                 contradicting.append("Radar active with 0 valid targets")
         elif not radar_active:
+            radar_evidence.append("Radar stream stale or disconnected")
             contradicting.append("Radar stream stale or disconnected")
-
-        # 2. Evaluate Wi-Fi Sensing Evidence
-        wifi_activity_noted = False
-        if wifi_active:
-            metrics = wifi_radar or wifi_mag
-            if metrics:
-                if metrics.motion_heuristic == "ACTIVE":
-                    wifi_activity_noted = True
-                    supporting.append(f"Wi-Fi CSI subcarrier variance elevated (heuristic: ACTIVE, var: {metrics.csi_amplitude_variance})")
-                elif metrics.motion_heuristic == "SUBTLE":
-                    wifi_activity_noted = True
-                    supporting.append(f"Wi-Fi CSI reports subtle channel fluctuation")
-                else:
-                    if radar_detected_targets and presence_state == "MOVING_TARGET":
-                        contradicting.append("Wi-Fi CSI variance is quiet while radar tracks motion")
-                    else:
-                        supporting.append("Wi-Fi channel state baseline quiet")
         else:
+            radar_evidence.append("Radar active, 0 targets in FOV")
+
+        # 2. Evaluate Wi-Fi Sensing Evidence (Receiver 1 & Receiver 2)
+        rx1_evidence: List[str] = []
+        rx2_evidence: List[str] = []
+        wifi_activity_noted = False
+
+        # Evaluate Rx1
+        if wifi_radar and (now - wifi_updated_at < self.stale_threshold_sec):
+            rx1_evidence.append(f"RSSI: {wifi_radar.rssi_dbm} dBm ({wifi_radar.connection_status})")
+            rx1_evidence.append(f"CSI Format: {wifi_radar.feature_format}")
+            rx1_evidence.append(f"Packet Rate: {wifi_radar.csi_packet_rate:.0f} Hz (Loss: {wifi_radar.packet_loss_pct:.1f}%)")
+            if wifi_radar.csi_amplitude_variance is not None:
+                rx1_evidence.append(f"Variance: {wifi_radar.csi_amplitude_variance:.2f} ({wifi_radar.motion_heuristic})")
+            if wifi_radar.motion_heuristic in ["ACTIVE", "SUBTLE"]:
+                wifi_activity_noted = True
+                supporting.append(f"Rx1 CSI subcarrier variance elevated ({wifi_radar.motion_heuristic})")
+        else:
+            rx1_evidence.append("Rx1 offline or stale")
+
+        # Evaluate Rx2
+        if wifi_mag and (now - wifi_updated_at < self.stale_threshold_sec):
+            rx2_evidence.append(f"RSSI: {wifi_mag.rssi_dbm} dBm ({wifi_mag.connection_status})")
+            rx2_evidence.append(f"CSI Format: {wifi_mag.feature_format}")
+            rx2_evidence.append(f"Packet Rate: {wifi_mag.csi_packet_rate:.0f} Hz")
+            if wifi_mag.csi_amplitude_variance is not None:
+                rx2_evidence.append(f"Variance: {wifi_mag.csi_amplitude_variance:.2f} ({wifi_mag.motion_heuristic})")
+            if wifi_mag.motion_heuristic in ["ACTIVE", "SUBTLE"]:
+                wifi_activity_noted = True
+                supporting.append(f"Rx2 Wi-Fi activity elevated ({wifi_mag.motion_heuristic})")
+        else:
+            rx2_evidence.append("Rx2 offline or stale")
+
+        if not wifi_active:
             contradicting.append("Wi-Fi telemetry stale or offline")
 
         # 3. Evaluate Magnetometer Evidence & Threat
         significant_mag_deviation = False
         if mag_active and mag:
             if mag.calibration_status == "CALIBRATED":
-                # Significant disturbance threshold (typically > 3.0 uT above background)
                 if mag.delta_magnitude > 3.0:
                     significant_mag_deviation = True
                     supporting.append(f"Magnetic disturbance detected: +{mag.delta_magnitude} uT above calibrated baseline")
@@ -137,28 +160,46 @@ class SensorFusionEngine:
             contradicting.append("MTC-1 model awaiting target range measurement for dipole evaluation")
 
         # 5. Formulate Transparent Synthesis
+        confidence_val: Optional[float] = None
         if not radar_active and not wifi_active and not mag_active:
             presence_state = "OFFLINE"
             threat_state = "UNKNOWN"
             explainable_summary = "All sensor streams are offline or stale. No valid telemetry."
+            confidence_val = 0.0
         elif radar_detected_targets and significant_mag_deviation:
             explainable_summary = f"Multi-modal confirmation: Target detected at {closest_distance}m correlated with +{mag.delta_magnitude} uT magnetic disturbance."
+            confidence_val = 92.0
         elif radar_detected_targets:
             explainable_summary = f"Radar confirms presence at {closest_distance}m. Magnetic baseline normal (no anomalous ferrous mass detected)."
+            confidence_val = 88.0
         elif wifi_activity_noted and not radar_detected_targets:
             presence_state = "WIFI_RF_ACTIVITY_ONLY"
             explainable_summary = "Wi-Fi channel disturbance observed without confirmed radar target. Possible peripheral movement or multipath interference."
+            confidence_val = 45.0
         elif significant_mag_deviation and not radar_detected_targets:
             explainable_summary = f"Magnetic disturbance (+{mag.delta_magnitude} uT) without radar target. Possible static structural metal or equipment activation."
+            confidence_val = 50.0
         else:
             explainable_summary = "Ambient baseline quiet. No human targets or significant magnetic anomalies detected."
+            confidence_val = 95.0
+
+        uncertainty_note = (
+            "Wi-Fi sensing reflects channel multipath disturbance and does not yield direct 3D human coordinates without spatial anchors. "
+            "Radar targets represent true millimeter-wave LD2450 coordinates."
+        )
 
         return FusionState(
             presence_state=presence_state,
             threat_state=threat_state,
             explainable_summary=explainable_summary,
+            combined_output=explainable_summary,
+            radar_evidence=radar_evidence,
+            rx1_evidence=rx1_evidence,
+            rx2_evidence=rx2_evidence,
             supporting_sensors=supporting,
             conflicting_sensors=contradicting,
+            confidence_score=confidence_val,
+            uncertainty_note=uncertainty_note,
             freshness=freshness,
             tracked_target_count=target_count,
             closest_target_distance_m=closest_distance,

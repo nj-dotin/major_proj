@@ -3,352 +3,550 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NewVision | Multimodal Wi-Fi Sensing, Radar Tracking & MTC-1</title>
+  <title>NewVision — System Monitoring Dashboard</title>
   <!-- Google Fonts: Inter & JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/dashboard.css">
 </head>
-<body>
+<body class="page-newvision">
 
   <!-- Top Navigation Bar -->
   <header class="topbar">
-    <div class="brand">
-      <div class="brand-logo">
-        <span style="color:#00e5ff">⚡</span> NEWVISION
+    <div class="brand-group">
+      <div class="brand">
+        <span class="brand-symbol">◈</span>
+        <span class="brand-name">NEWVISION</span>
+        <span class="brand-sub">SYSTEM PLATFORM</span>
       </div>
-      <div id="modeBadge" class="brand-badge btn-mode-demo">DEMO / SIMULATED DATA</div>
-      <div class="brand-badge" style="background:rgba(255,255,255,0.06);color:#8b949e">v1.0-CROSS-PLATFORM</div>
+
+      <!-- Main Navigation Tabs: NewVision vs NewView -->
+      <nav class="nav-tabs" aria-label="Main Navigation">
+        <a href="/" class="nav-tab active" aria-current="page">
+          <span class="nav-icon">📊</span>
+          <span>NewVision</span>
+          <span class="nav-badge">SYSTEM</span>
+        </a>
+        <a href="/newview" class="nav-tab">
+          <span class="nav-icon">🧭</span>
+          <span>NewView</span>
+          <span class="nav-badge highlight">2D / 3D SPATIAL</span>
+        </a>
+      </nav>
     </div>
 
+    <!-- Global Controls & Status -->
     <div class="topbar-actions">
-      <!-- Demo Object Selector (Visible in Demo Mode) -->
-      <select id="simObjectSelect" class="btn btn-action" title="Change simulated threat object in demo mode">
-        <option value="handgun">Simulate: Handgun</option>
-        <option value="knife">Simulate: Knife</option>
-        <option value="rifle">Simulate: Rifle</option>
-        <option value="tool">Simulate: Tool</option>
-        <option value="clear">Simulate: Clear / Ambient</option>
-      </select>
+      <!-- Demo Simulation Object Selector -->
+      <div id="demoControlsWrapper" class="control-group">
+        <label for="simObjectSelect" class="control-label">SIMULATE</label>
+        <select id="simObjectSelect" class="form-select" title="Simulate object threat signature">
+          <option value="handgun">Handgun (High Threat)</option>
+          <option value="knife">Knife (High Threat)</option>
+          <option value="rifle">Rifle (High Threat)</option>
+          <option value="tool">Tool (Low Threat)</option>
+          <option value="clear">Clear / Ambient</option>
+        </select>
+      </div>
 
-      <!-- Zero Magnetometer Button -->
-      <button id="btnCalibrateMag" class="btn btn-action">
-        <span>⌖ Zero Magnetometer</span>
-      </button>
-
-      <!-- Session Recording -->
-      <button id="btnRecord" class="btn btn-record">
-        <span>⏺ Record Session</span>
+      <button id="btnCalibrateMag" class="btn btn-secondary" title="Re-zero magnetic baseline">
+        <span>⌖ Zero Baseline</span>
       </button>
 
-      <!-- Export Buttons -->
-      <button id="btnExportCsv" class="btn btn-action" title="Export session data as CSV">
-        <span>↓ CSV</span>
-      </button>
-      <button id="btnExportJson" class="btn btn-action" title="Export session data as JSON">
-        <span>↓ JSON</span>
-      </button>
+      <!-- Recording Actions -->
+      <div class="btn-group">
+        <button id="btnRecord" class="btn btn-record" title="Toggle session telemetry recording">
+          <span class="record-dot"></span>
+          <span id="recordBtnText">Record</span>
+        </button>
+        <button id="btnExportCsv" class="btn btn-secondary" title="Export session data as CSV">CSV</button>
+        <button id="btnExportJson" class="btn btn-secondary" title="Export session data as JSON">JSON</button>
+      </div>
 
       <!-- Mode Switcher -->
-      <button id="btnToggleMode" class="btn btn-mode-demo">
-        <span>⚡ Mode: SIMULATED</span>
+      <button id="btnToggleMode" class="btn btn-mode-demo" title="Toggle between simulated demo and live hardware">
+        <span id="modeStatusDot" class="status-indicator-dot warning"></span>
+        <span id="modeLabelText">DEMO / SIMULATED</span>
       </button>
 
-      <!-- System Connection Status -->
-      <div style="display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;padding-left:8px;border-left:1px solid rgba(255,255,255,0.1)">
-        <div id="sysStatusDot" class="node-status-dot"></div>
-        <span id="sysStatusText" style="color:var(--text-secondary)">LIVE</span>
+      <!-- Connection Indicator -->
+      <div class="conn-pill" title="Backend WebSocket connection status">
+        <div id="sysStatusDot" class="status-indicator-dot online"></div>
+        <span id="sysStatusText">CONNECTED</span>
       </div>
     </div>
   </header>
 
   <!-- Demo Notice Banner -->
-  <div id="demoBanner" class="demo-banner">
-    <span>⚠️ DEMO / SIMULATED DATA</span>
-    <span>Simulated values are generated deterministically and never presented as live hardware.</span>
-  </div>
+  <aside id="demoBanner" class="system-alert-banner warning" role="alert">
+    <div class="alert-content">
+      <span class="alert-icon">⚠️</span>
+      <span class="alert-title">DEMO MODE ACTIVE:</span>
+      <span class="alert-desc">Operating on deterministic multi-modal simulation. Measurements are flagged as simulated and never presented as live hardware data.</span>
+    </div>
+    <span class="badge badge-amber">SYNTHETIC FEED</span>
+  </aside>
 
-  <main class="dashboard-container">
+  <!-- Main Content Layout -->
+  <main class="dashboard-shell">
 
-    <!-- Device Nodes Status Ribbon -->
-    <section class="nodes-grid">
-      <!-- NodeMCU AP Card -->
-      <div class="node-card">
-        <div class="node-header">
-          <div class="node-title">
-            <div id="nodeApDot" class="node-status-dot"></div>
-            <span>NodeMCU ESP8266 (AP)</span>
-          </div>
-          <span class="brand-badge" style="color:#00e5ff">TRAFFIC SOURCE</span>
-        </div>
-        <div class="node-metrics">
-          <span>IP: <b id="nodeApIp">192.168.4.1</b></span>
-          <span>SSID: <b>CSI_TEST (Ch 6)</b></span>
-          <span>Rate: <b id="nodeApRate">100 pps</b></span>
-          <span>Uptime: <b id="nodeApUptime">--</b></span>
+    <!-- ── SECTION A: SYSTEM OVERVIEW ───────────────────────────────────────── -->
+    <section class="section-block" aria-labelledby="heading-system-overview">
+      <div class="section-header">
+        <h2 id="heading-system-overview" class="section-title">
+          <span class="section-icon">⚙️</span>
+          <span>A. System Overview & Health</span>
+        </h2>
+        <div class="section-meta">
+          <span id="sysFreshnessBadge" class="meta-pill">Latency: <b id="freshnessValue">0.05s</b></span>
+          <span id="sysActiveNodesBadge" class="meta-pill">Active Nodes: <b id="activeNodesCount">3/3</b></span>
+          <span id="sysLastUpdate" class="meta-pill">Updated: <b id="lastUpdateTimestamp">--:--:--</b></span>
         </div>
       </div>
 
-      <!-- ESP32 #1 Radar + CSI Card -->
-      <div class="node-card">
-        <div class="node-header">
-          <div class="node-title">
-            <div id="nodeRadarDot" class="node-status-dot"></div>
-            <span>ESP32 #1 (Radar + CSI)</span>
+      <div class="grid-quad">
+        <!-- System Health Card -->
+        <div class="metric-card">
+          <div class="metric-card-header">
+            <span class="card-kicker">CORE PLATFORM</span>
+            <span id="sysOverallStateBadge" class="badge badge-emerald">OPERATIONAL</span>
           </div>
-          <span class="brand-badge" style="color:#00e5ff">24 GHz LD2450</span>
+          <div class="metric-card-body">
+            <div class="metric-stat-hero">
+              <span class="stat-number" id="sysHealthPercent">100</span>
+              <span class="stat-unit">% UPTIME</span>
+            </div>
+            <div class="metric-sub-rows">
+              <div class="sub-row">
+                <span>Ingestion Mode:</span>
+                <b id="sysModeDisplay" class="color-amber">Simulated Telemetry</b>
+              </div>
+              <div class="sub-row">
+                <span>WebSocket Stream:</span>
+                <b id="sysWsStatus">20.0 Hz active</b>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="node-metrics">
-          <span>IP: <b id="nodeRadarIp">192.168.4.10</b></span>
-          <span>Baud: <b>256,000 UART2</b></span>
-          <span>Rate: <b id="nodeRadarRate">20 pps</b></span>
-          <span>Uptime: <b id="nodeRadarUptime">--</b></span>
+
+        <!-- NodeMCU AP Traffic Source Card -->
+        <div class="metric-card">
+          <div class="metric-card-header">
+            <span class="card-kicker">AP TRAFFIC SOURCE</span>
+            <span id="nodeApStatusBadge" class="badge badge-cyan">CHANNEL 6</span>
+          </div>
+          <div class="metric-card-body">
+            <div class="metric-stat-hero">
+              <span class="stat-number" id="nodeApRate">98.5</span>
+              <span class="stat-unit">PKT/S</span>
+            </div>
+            <div class="metric-sub-rows">
+              <div class="sub-row">
+                <span>SSID / Gateway:</span>
+                <b id="nodeApSsid">CSI_TEST (192.168.4.1)</b>
+              </div>
+              <div class="sub-row">
+                <span>Uptime / Heap:</span>
+                <b id="nodeApUptime">--</b>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Receiver 1 Health Card -->
+        <div class="metric-card">
+          <div class="metric-card-header">
+            <span class="card-kicker">RECEIVER 1 (ESP32 #1)</span>
+            <span id="nodeRadarStatusBadge" class="badge badge-cyan">RADAR + CSI</span>
+          </div>
+          <div class="metric-card-body">
+            <div class="metric-stat-hero">
+              <span class="stat-number" id="nodeRadarRate">20.0</span>
+              <span class="stat-unit">FPS TELEMETRY</span>
+            </div>
+            <div class="metric-sub-rows">
+              <div class="sub-row">
+                <span>Role & IP:</span>
+                <b id="nodeRadarIp">192.168.4.10</b>
+              </div>
+              <div class="sub-row">
+                <span>UART Errors:</span>
+                <b id="nodeRadarErrors">0 errors</b>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Receiver 2 Health Card -->
+        <div class="metric-card">
+          <div class="metric-card-header">
+            <span class="card-kicker">RECEIVER 2 (ESP32 #2)</span>
+            <span id="nodeMagStatusBadge" class="badge badge-purple">MAG + CSI</span>
+          </div>
+          <div class="metric-card-body">
+            <div class="metric-stat-hero">
+              <span class="stat-number" id="nodeMagRate">20.0</span>
+              <span class="stat-unit">FPS TELEMETRY</span>
+            </div>
+            <div class="metric-sub-rows">
+              <div class="sub-row">
+                <span>Sensor / IP:</span>
+                <b id="nodeMagIp">192.168.4.20</b>
+              </div>
+              <div class="sub-row">
+                <span>Mag Calibration:</span>
+                <b id="nodeMagCalibStatus" class="color-emerald">CALIBRATED</b>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- ESP32 #2 Magnetometer + CSI Card -->
-      <div class="node-card">
-        <div class="node-header">
-          <div class="node-title">
-            <div id="nodeMagDot" class="node-status-dot"></div>
-            <span>ESP32 #2 (Mag + CSI)</span>
-          </div>
-          <span class="brand-badge" style="color:#f59e0b" id="magChipLabel">HMC5883L</span>
+      <!-- Active Session Status Banner -->
+      <div class="session-status-strip">
+        <div class="session-info">
+          <span class="session-indicator-icon">⏺</span>
+          <span>Session Buffer: <b id="sessionSamplesCount">0</b> frames cached</span>
+          <span class="separator">|</span>
+          <span>Recording: <b id="sessionRecordState">IDLE</b></span>
+          <span class="separator">|</span>
+          <span>Duration: <b id="sessionDuration">0.0s</b></span>
         </div>
-        <div class="node-metrics">
-          <span>IP: <b id="nodeMagIp">192.168.4.20</b></span>
-          <span>Calib: <b id="magCalibBadge" style="color:#10b981">CALIBRATED</b></span>
-          <span>Rate: <b id="nodeMagRate">20 pps</b></span>
-          <span>Uptime: <b id="nodeMagUptime">--</b></span>
+        <div class="session-actions">
+          <button id="btnClearSession" class="btn btn-ghost" title="Clear current telemetry buffer">Clear Buffer</button>
         </div>
       </div>
     </section>
 
-    <!-- Main Grid: Radar on Left, Multi-Modal & Fusion on Right -->
-    <div class="main-grid">
+    <!-- ── 2-COLUMN SPLIT: RADAR (LEFT) & WI-FI (RIGHT) ─────────────────────── -->
+    <div class="grid-split-half">
 
-      <!-- LEFT COLUMN: Radar Tracking 2D Visualizer -->
-      <div style="display:flex;flex-direction:column;gap:20px;">
-        <section class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <span style="color:#00e5ff">◎</span> LD2450 Radar 2D Tracking
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <span id="radarTargetCount" class="brand-badge" style="background:rgba(0,229,255,0.15);color:#00e5ff">1 TARGETS</span>
-              <span id="radarStatusBadge" class="brand-badge" style="color:#10b981">ACTIVE</span>
-              <span id="radarErrorsBadge" class="brand-badge" style="color:#8b949e">ERR: 0</span>
-            </div>
+      <!-- ── SECTION B: RADAR MONITORING ────────────────────────────────────── -->
+      <section class="section-block" aria-labelledby="heading-radar">
+        <div class="section-header">
+          <h2 id="heading-radar" class="section-title">
+            <span class="section-icon">📡</span>
+            <span>B. LD2450 Radar Target Monitoring</span>
+          </h2>
+          <div class="section-meta">
+            <span id="radarQualityBadge" class="badge badge-cyan">HIGH QUALITY</span>
+            <span id="radarTargetCountBadge" class="badge badge-emerald">1 TARGET</span>
           </div>
+        </div>
 
-          <!-- Radar 2D Canvas -->
-          <div class="radar-wrapper">
-            <canvas id="radarCanvas"></canvas>
-            <div class="radar-hud-overlay">
-              <span>FOV: ±60° AZIMUTH</span>
-              <span>RANGE: 0 - 6.0 METERS</span>
-              <span>FORMAT: CARTESIAN (X, Y)</span>
+        <div class="card-panel">
+          <!-- Mini 2D Radar Scope Preview -->
+          <div class="radar-scope-container">
+            <canvas id="radarCanvas" class="radar-scope-canvas"></canvas>
+            <div class="scope-overlay-tag">
+              <span>FOV: ±60° | RANGE: 0 - 6.0m</span>
+              <a href="/newview" class="link-inline" title="Open full-screen 2D/3D NewView workspace">Open in NewView ↗</a>
             </div>
           </div>
 
           <!-- Target Table Readout -->
-          <table class="radar-targets-table">
-            <thead>
-              <tr>
-                <th>TARGET</th>
-                <th>LATERAL / DIST (X, Y)</th>
-                <th>RANGE</th>
-                <th>RADIAL SPEED</th>
-                <th>STATUS</th>
-              </tr>
-            </thead>
-            <tbody id="radarTargetTableBody">
-              <tr><td colspan="5" style="text-align:center;color:#666;">No targets in field of view</td></tr>
-            </tbody>
-          </table>
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);display:flex;justify-content:space-between">
-            <span>* True millimeter-wave LD2450 targets. Wi-Fi CSI does not supply coordinates.</span>
-            <span>Speed: (+) away, (-) approaching</span>
-          </div>
-        </section>
-
-        <!-- Wi-Fi Sensing Card -->
-        <section class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <span style="color:#a855f7">📶</span> Wi-Fi CSI & RSSI Sensing
-            </div>
-            <div class="disclaimer-badge">HEURISTIC ACTIVITY INDICATOR</div>
+          <div class="table-container">
+            <table class="data-table" aria-label="Tracked Radar Targets">
+              <thead>
+                <tr>
+                  <th scope="col">ID</th>
+                  <th scope="col">Coordinates (X, Y)</th>
+                  <th scope="col">Range</th>
+                  <th scope="col">Radial Speed</th>
+                  <th scope="col">Movement</th>
+                </tr>
+              </thead>
+              <tbody id="radarTargetTableBody">
+                <tr>
+                  <td colspan="5" class="empty-state">Awaiting radar target telemetry...</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
-          <!-- Waveform Canvas -->
-          <div class="chart-container">
-            <canvas id="wifiChartCanvas" class="chart-canvas"></canvas>
+          <div class="card-footer-notes">
+            <span>* Direct millimeter-wave measurements from HLK-LD2450 radar. Coordinates are physical meters.</span>
           </div>
+        </div>
+      </section>
 
-          <div class="wifi-metrics-row">
-            <div class="metric-box">
-              <div class="metric-label">ESP32 #1 RSSI (Radar Node)</div>
-              <div id="wifiRadarRssi" class="metric-value" style="color:#00e5ff">-48 dBm</div>
-            </div>
-            <div class="metric-box">
-              <div class="metric-label">ESP32 #2 RSSI (Mag Node)</div>
-              <div id="wifiMagRssi" class="metric-value" style="color:#a855f7">-49 dBm</div>
-            </div>
-            <div class="metric-box">
-              <div class="metric-label">CSI Packet Rate</div>
-              <div id="csiPacketRate" class="metric-value">100 Hz</div>
-            </div>
+      <!-- ── SECTION C: WI-FI SENSING (RECEIVER 1 & RECEIVER 2) ─────────────── -->
+      <section class="section-block" aria-labelledby="heading-wifi">
+        <div class="section-header">
+          <h2 id="heading-wifi" class="section-title">
+            <span class="section-icon">📶</span>
+            <span>C. Wi-Fi Sensing Streams (Rx1 & Rx2)</span>
+          </h2>
+          <div class="section-meta">
+            <span class="disclaimer-chip">INDEPENDENT SENSING STREAMS</span>
           </div>
+        </div>
 
-          <div class="wifi-metrics-row">
-            <div class="metric-box">
-              <div class="metric-label">Subcarrier Amplitude Variance</div>
-              <div id="csiVariance" class="metric-value">2.45</div>
-            </div>
-            <div class="metric-box">
-              <div class="metric-label">Heuristic Channel Activity</div>
-              <div id="wifiMotionHeuristic" class="metric-value" style="color:#f59e0b">ACTIVE</div>
-            </div>
-            <div class="metric-box">
-              <div class="metric-label">CSI Location Classifier</div>
-              <div class="metric-value" style="font-size:12px;color:#8b949e">NOT VALIDATED (38.9% test baseline)</div>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <!-- RIGHT COLUMN: Magnetometer + MTC-1 Model + Sensor Fusion -->
-      <div style="display:flex;flex-direction:column;gap:20px;">
-
-        <!-- Sensor Fusion Center -->
-        <section class="card fusion-card">
-          <div class="card-header">
-            <div class="card-title" style="color:#00e5ff">
-              <span>⛯</span> Multi-Modal Fusion Engine
-            </div>
-            <span class="brand-badge" style="background:rgba(0,229,255,0.2);color:#00e5ff">EXPLAINABLE SENSING</span>
-          </div>
-
-          <div class="fusion-status-hero">
-            <div>
-              <div style="font-size:10px;color:var(--text-secondary);font-family:var(--font-mono);text-transform:uppercase">Consolidated Presence State</div>
-              <div id="fusionPresenceState" class="fusion-state-title" style="color:#00e5ff">MOVING_TARGET</div>
-            </div>
-            <div style="text-align:right">
-              <div style="font-size:10px;color:var(--text-secondary);font-family:var(--font-mono);text-transform:uppercase">Threat Assessment</div>
-              <div id="fusionThreatState" class="fusion-state-title" style="color:#10b981">NONE</div>
-            </div>
-          </div>
-
-          <div id="fusionSummary" style="font-family:var(--font-mono);font-size:12px;background:rgba(0,0,0,0.25);padding:10px 14px;border-radius:6px;border-left:3px solid #00e5ff;color:#e6edf3">
-            Multi-modal confirmation: Radar confirms target presence. Ambient magnetic baseline stable.
-          </div>
-
-          <div class="fusion-evidence-grid">
-            <div class="evidence-box">
-              <div class="evidence-title" style="color:#10b981"><span>✓</span> Supporting Evidence</div>
-              <ul id="fusionSupportingList" class="evidence-list support">
-                <li>✓ Radar tracking 1 target at 2.4m</li>
-                <li>✓ Wi-Fi CSI subcarrier variance confirms motion</li>
-              </ul>
-            </div>
-            <div class="evidence-box">
-              <div class="evidence-title" style="color:#ef4444"><span>⚠</span> Contradictions / Staleness</div>
-              <ul id="fusionConflictingList" class="evidence-list conflict">
-                <li>No conflicting streams</li>
-              </ul>
-            </div>
-          </div>
-
-          <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);border-top:1px solid rgba(255,255,255,0.06);padding-top:10px">
-            <span id="freshnessRadar">Radar: 0.05s</span>
-            <span id="freshnessWifi">Wi-Fi: 0.05s</span>
-            <span id="freshnessMag">Mag: 0.05s</span>
-          </div>
-        </section>
-
-        <!-- Magnetometer Waveform & Baseline -->
-        <section class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <span style="color:#f59e0b">🧲</span> Magnetometer (3-Axis Flux)
-            </div>
-            <div style="display:flex;gap:8px;">
-              <span id="magReadout" style="font-family:var(--font-mono);font-size:11px;color:#8b949e">Bx: 0.0 | By: 0.0 | Bz: 0.0</span>
-            </div>
-          </div>
-
-          <div class="mag-waveform-container">
-            <canvas id="magChartCanvas" class="chart-canvas"></canvas>
-          </div>
-
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <div class="metric-box">
-              <div class="metric-label">Total Magnetic Magnitude</div>
-              <div id="magMagnitude" class="metric-value" style="color:#f59e0b">48.2 µT</div>
-            </div>
-            <div class="metric-box">
-              <div class="metric-label">Baseline Deviation (ΔB)</div>
-              <div id="magDelta" class="metric-value" style="color:#10b981">Δ 0.12 µT</div>
-            </div>
-          </div>
-        </section>
-
-        <!-- MTC-1 Threat Classifier Card -->
-        <section class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <span style="color:#ef4444">🛡️</span> MTC-1 Threat Classifier
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <span id="mtcStatusBadge" class="brand-badge" style="border:1px solid #10b981;color:#10b981">READY</span>
-              <span id="mtcThreatBadge" class="brand-badge" style="background:rgba(16,185,129,0.2);color:#10b981">NONE</span>
-            </div>
-          </div>
-
-          <div class="mtc-result-card">
-            <div class="mtc-header-row">
-              <div class="mtc-class-display">
-                <span class="mtc-class-name" id="mtcPredictedClass">CLEAR</span>
-                <span class="mtc-confidence" id="mtcConfidence">98.5%</span>
+        <!-- Dual Receiver Cards Side-by-Side -->
+        <div class="grid-split-half tight">
+          <!-- Receiver 1 Card -->
+          <div class="card-panel receiver-panel">
+            <div class="receiver-header">
+              <div class="receiver-title">
+                <span class="receiver-tag rx1">RX 1</span>
+                <span>ESP32 #1 (Radar Node)</span>
               </div>
-              <div class="disclaimer-badge">SYNTHETIC MODEL (UNVALIDATED)</div>
+              <span id="rx1CsiBadge" class="badge badge-cyan">CSI ACTIVE</span>
             </div>
 
-            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary)">
-              <div id="mtcDistanceSource">Target range: 2.4m</div>
-              <div id="mtcExplanation" style="margin-top:2px;color:var(--text-muted)">Evaluated using dipole gradient approximation.</div>
-            </div>
-
-            <!-- Probability Distribution Bars -->
-            <div id="probBarsContainer" class="prob-bars-grid">
-              <!-- Rendered via JS for 6 classes: clear, handgun, ied_nail, knife, rifle, tool -->
+            <div class="receiver-metrics-list">
+              <div class="metric-row">
+                <span class="metric-name">RSSI:</span>
+                <span id="rx1Rssi" class="metric-val color-cyan">-46 dBm</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">CSI Availability:</span>
+                <span id="rx1CsiAvailable" class="metric-val color-emerald">Available (64 SC)</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Feature Format:</span>
+                <span id="rx1Format" class="metric-val">SUBCA_AMP_VAR</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Sample Rate:</span>
+                <span id="rx1Rate" class="metric-val">100.0 Hz</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Subcarrier Variance:</span>
+                <span id="rx1Variance" class="metric-val color-amber">2.45</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Packet Loss:</span>
+                <span id="rx1Loss" class="metric-val">0.1%</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Activity Heuristic:</span>
+                <span id="rx1Motion" class="metric-val color-amber">ACTIVE</span>
+              </div>
             </div>
           </div>
-        </section>
 
-        <!-- Diagnostic Event Feed -->
-        <section class="card">
-          <div class="card-header">
-            <div class="card-title">
-              <span style="color:#8b949e">📋</span> System Event Log
+          <!-- Receiver 2 Card -->
+          <div class="card-panel receiver-panel">
+            <div class="receiver-header">
+              <div class="receiver-title">
+                <span class="receiver-tag rx2">RX 2</span>
+                <span>ESP32 #2 (Mag Node)</span>
+              </div>
+              <span id="rx2CsiBadge" class="badge badge-purple">RAW RSSI ONLY</span>
             </div>
-            <span class="brand-badge" style="color:#8b949e">DIAGNOSTICS</span>
-          </div>
-          <div id="logFeed" class="log-box">
-            <div class="log-entry">
-              <span class="log-time">[BOOT]</span>
-              <span class="log-text">NewVision initialized. Waiting for telemetry frames...</span>
-            </div>
-          </div>
-        </section>
 
-      </div>
+            <div class="receiver-metrics-list">
+              <div class="metric-row">
+                <span class="metric-name">RSSI:</span>
+                <span id="rx2Rssi" class="metric-val color-purple">-49 dBm</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">CSI Availability:</span>
+                <span id="rx2CsiAvailable" class="metric-val color-muted">No Raw CSI (RSSI only)</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Feature Format:</span>
+                <span id="rx2Format" class="metric-val">RAW_RSSI_ONLY</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Sample Rate:</span>
+                <span id="rx2Rate" class="metric-val">100.0 Hz</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Derived Variance:</span>
+                <span id="rx2Variance" class="metric-val color-amber">1.12</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Packet Loss:</span>
+                <span id="rx2Loss" class="metric-val">0.3%</span>
+              </div>
+              <div class="metric-row">
+                <span class="metric-name">Activity Heuristic:</span>
+                <span id="rx2Motion" class="metric-val color-emerald">SUBTLE</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live RSSI Rolling Waveform Chart -->
+        <div class="card-panel chart-panel">
+          <div class="chart-header">
+            <span class="chart-title">Dual-Receiver RSSI History (dBm)</span>
+            <div class="chart-legend">
+              <span class="legend-dot" style="background:#00e5ff"></span>
+              <span>Rx1 (Radar)</span>
+              <span class="legend-dot" style="background:#a855f7"></span>
+              <span>Rx2 (Mag)</span>
+            </div>
+          </div>
+          <div class="chart-viewport">
+            <canvas id="wifiChartCanvas" class="rolling-chart-canvas"></canvas>
+          </div>
+          <div class="card-footer-notes">
+            <span>* Honest Sensing Disclosure: Wi-Fi subcarrier variance reflects multipath channel distortion, not true human coordinates.</span>
+          </div>
+        </div>
+      </section>
+
     </div>
+
+    <!-- ── SECTION D: FUSION AND MULTIMODAL EVIDENCE ────────────────────────── -->
+    <section class="section-block" aria-labelledby="heading-fusion">
+      <div class="section-header">
+        <h2 id="heading-fusion" class="section-title">
+          <span class="section-icon">⛯</span>
+          <span>D. Multimodal Evidence & Fusion Matrix</span>
+        </h2>
+        <div class="section-meta">
+          <span class="badge badge-cyan">EXPLAINABLE SYNTHESIS</span>
+        </div>
+      </div>
+
+      <div class="grid-quad">
+        <!-- 1. Radar-Only Evidence -->
+        <div class="card-panel evidence-column">
+          <div class="evidence-col-header">
+            <span class="evidence-source-tag radar">RADAR EVIDENCE</span>
+          </div>
+          <ul id="radarEvidenceList" class="evidence-bullet-list">
+            <li>Awaiting radar frames...</li>
+          </ul>
+        </div>
+
+        <!-- 2. Receiver 1 Evidence -->
+        <div class="card-panel evidence-column">
+          <div class="evidence-col-header">
+            <span class="evidence-source-tag rx1">RECEIVER 1 EVIDENCE</span>
+          </div>
+          <ul id="rx1EvidenceList" class="evidence-bullet-list">
+            <li>Awaiting Rx1 frames...</li>
+          </ul>
+        </div>
+
+        <!-- 3. Receiver 2 Evidence -->
+        <div class="card-panel evidence-column">
+          <div class="evidence-col-header">
+            <span class="evidence-source-tag rx2">RECEIVER 2 EVIDENCE</span>
+          </div>
+          <ul id="rx2EvidenceList" class="evidence-bullet-list">
+            <li>Awaiting Rx2 frames...</li>
+          </ul>
+        </div>
+
+        <!-- 4. Combined Fusion Output -->
+        <div class="card-panel evidence-column combined">
+          <div class="evidence-col-header">
+            <span class="evidence-source-tag fusion">COMBINED FUSION</span>
+            <span id="fusionConfidenceBadge" class="badge badge-emerald">CONF: 88%</span>
+          </div>
+          <div class="fusion-hero-box">
+            <div class="fusion-state-label">ESTIMATED PRESENCE</div>
+            <div id="fusionPresenceState" class="fusion-state-val color-cyan">MOVING_TARGET</div>
+            <div id="fusionSummaryText" class="fusion-summary-desc">
+              Multi-modal confirmation: Radar tracks target at 2.4m. Wi-Fi variance confirms channel perturbation.
+            </div>
+          </div>
+          <div class="fusion-uncertainty-box">
+            <span class="uncertainty-title">UNCERTAINTY & LIMITATIONS:</span>
+            <span id="fusionUncertaintyText" class="uncertainty-text">
+              Wi-Fi variance indicates multipath disturbance only. Coordinates originate strictly from the LD2450 radar.
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── SECTION E: RECORDING, DIAGNOSTICS & MTC-1 ────────────────────────── -->
+    <section class="section-block" aria-labelledby="heading-diagnostics">
+      <div class="section-header">
+        <h2 id="heading-diagnostics" class="section-title">
+          <span class="section-icon">🧲</span>
+          <span>E. Magnetometer, MTC-1 & Diagnostics</span>
+        </h2>
+        <div class="section-meta">
+          <span class="badge badge-amber">EXPERIMENTAL CLASSIFIER</span>
+        </div>
+      </div>
+
+      <div class="grid-split-half">
+        <!-- 3-Axis Magnetometer Waveform Card -->
+        <div class="card-panel">
+          <div class="card-inner-header">
+            <div class="title-with-pill">
+              <span class="card-kicker">MAGNETIC FLUX (µT)</span>
+              <span id="magSensorChipBadge" class="badge badge-amber">HMC5883L</span>
+            </div>
+            <div class="mag-stat-group">
+              <span>Magnitude: <b id="magMagnitude">48.2 µT</b></span>
+              <span class="separator">|</span>
+              <span>Deviation (ΔB): <b id="magDelta" class="color-emerald">0.12 µT</b></span>
+            </div>
+          </div>
+
+          <div class="chart-viewport height-120">
+            <canvas id="magChartCanvas" class="rolling-chart-canvas"></canvas>
+          </div>
+
+          <div class="axis-readout-strip">
+            <span>Bx: <b id="magBx">22.4 µT</b></span>
+            <span>By: <b id="magBy">14.8 µT</b></span>
+            <span>Bz: <b id="magBz">41.2 µT</b></span>
+            <button id="btnZeroBaselineInline" class="btn btn-tiny">Zero Baseline</button>
+          </div>
+        </div>
+
+        <!-- MTC-1 Classifier Card -->
+        <div class="card-panel">
+          <div class="card-inner-header">
+            <div class="title-with-pill">
+              <span class="card-kicker">MTC-1 MACHINE LEARNING CLASSIFIER</span>
+              <span id="mtcStatusBadge" class="badge badge-emerald">READY</span>
+            </div>
+            <span id="mtcThreatBadge" class="badge badge-danger">HIGH THREAT</span>
+          </div>
+
+          <div class="mtc-prediction-row">
+            <div class="predicted-class-block">
+              <span class="class-label">PREDICTED CLASS</span>
+              <span id="mtcPredictedClass" class="class-name color-cyan">HANDGUN</span>
+            </div>
+            <div class="predicted-conf-block">
+              <span class="conf-label">MODEL CONFIDENCE</span>
+              <span id="mtcConfidence" class="conf-value">91.4%</span>
+            </div>
+          </div>
+
+          <!-- Probability Bars Grid -->
+          <div id="probBarsContainer" class="prob-bars-grid">
+            <!-- Populated via JS for 6 classes: clear, handgun, ied_nail, knife, rifle, tool -->
+          </div>
+
+          <div class="card-footer-notes">
+            <span>* MTC-1 was trained on synthetic dipole physics. Labeled experimental until evaluated with physical weapon controls.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Collapsible System Event Log -->
+      <details class="collapsible-log-panel">
+        <summary class="log-summary-header">
+          <span>📋 System Event & Diagnostic Feed</span>
+          <span class="log-hint">Click to expand / collapse</span>
+        </summary>
+        <div id="logFeed" class="log-feed-box" role="log" aria-live="polite">
+          <div class="log-entry">
+            <span class="log-time">[BOOT]</span>
+            <span class="log-text">NewVision System Platform initialized. Ready for telemetry stream.</span>
+          </div>
+        </div>
+      </details>
+    </section>
+
   </main>
 
+  <!-- Scripts -->
   <script src="/static/js/radar_canvas.js"></script>
   <script src="/static/js/charts.js"></script>
   <script src="/static/js/dashboard.js"></script>

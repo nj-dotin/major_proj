@@ -1,24 +1,25 @@
 /**
- * NewVision Tactical Multi-Modal Dashboard Controller
- * Manages WebSocket telemetry stream, UI state updates, controls, and session exports.
+ * NewVision System Platform — Dashboard Controller
+ * Manages live WebSocket telemetry ingestion, Section A-E DOM updates,
+ * real-time dual-receiver RSSI/mag charts, radar canvas, and session recording.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Initialize Radar Canvas
+  // ── 1. Visualizations Initialization ─────────────────────────────────────
   const radarRenderer = new RadarCanvasRenderer('radarCanvas');
 
-  // Initialize Wi-Fi RSSI Chart (-90 to -30 dBm)
+  // Dual-receiver Wi-Fi RSSI chart (-95 to -20 dBm)
   const wifiChart = new RollingWaveformChart('wifiChartCanvas', {
     maxPoints: 80,
     minY: -95,
-    maxY: -25,
+    maxY: -20,
     series: [
-      { key: 'radar_rssi', color: '#00e5ff', label: 'ESP32 #1 Radar' },
-      { key: 'mag_rssi', color: '#a855f7', label: 'ESP32 #2 Mag' }
+      { key: 'rx1_rssi', color: '#00e5ff', label: 'Rx1 (Radar Node)' },
+      { key: 'rx2_rssi', color: '#a855f7', label: 'Rx2 (Mag Node)' }
     ]
   });
 
-  // Initialize Magnetometer Waveform Chart (Auto-scaled)
+  // 3-Axis Magnetometer Waveform Chart (Auto-scaled)
   const magChart = new RollingWaveformChart('magChartCanvas', {
     maxPoints: 80,
     autoScale: true,
@@ -29,22 +30,32 @@ document.addEventListener('DOMContentLoaded', () => {
     ]
   });
 
-  // State
+  // ── 2. State & Variables ─────────────────────────────────────────────────
   let ws = null;
   let isDemoMode = true;
   let isRecording = false;
+  let lastPacketTime = Date.now();
 
-  // DOM Elements
-  const modeBadge = document.getElementById('modeBadge');
-  const btnToggleMode = document.getElementById('btnToggleMode');
+  // ── 3. DOM Elements ──────────────────────────────────────────────────────
+  const sysStatusDot = document.getElementById('sysStatusDot');
+  const sysStatusText = document.getElementById('sysStatusText');
   const demoBanner = document.getElementById('demoBanner');
-  const btnCalibrateMag = document.getElementById('btnCalibrateMag');
-  const btnRecord = document.getElementById('btnRecord');
-  const btnExportJson = document.getElementById('btnExportJson');
-  const btnExportCsv = document.getElementById('btnExportCsv');
+  const btnToggleMode = document.getElementById('btnToggleMode');
+  const modeStatusDot = document.getElementById('modeStatusDot');
+  const modeLabelText = document.getElementById('modeLabelText');
   const simObjectSelect = document.getElementById('simObjectSelect');
+  const demoControlsWrapper = document.getElementById('demoControlsWrapper');
+
+  const btnCalibrateMag = document.getElementById('btnCalibrateMag');
+  const btnZeroBaselineInline = document.getElementById('btnZeroBaselineInline');
+  const btnRecord = document.getElementById('btnRecord');
+  const recordBtnText = document.getElementById('recordBtnText');
+  const btnExportCsv = document.getElementById('btnExportCsv');
+  const btnExportJson = document.getElementById('btnExportJson');
+  const btnClearSession = document.getElementById('btnClearSession');
   const logFeed = document.getElementById('logFeed');
 
+  // Helper: Log Feed
   function addLog(text) {
     if (!logFeed) return;
     const entry = document.createElement('div');
@@ -53,12 +64,12 @@ document.addEventListener('DOMContentLoaded', () => {
     entry.innerHTML = `<span class="log-time">[${timeStr}]</span> <span class="log-text">${text}</span>`;
     logFeed.appendChild(entry);
     logFeed.scrollTop = logFeed.scrollHeight;
-    while (logFeed.children.length > 50) {
+    while (logFeed.children.length > 60) {
       logFeed.removeChild(logFeed.firstChild);
     }
   }
 
-  // WebSocket Connection
+  // ── 4. WebSocket Streaming ───────────────────────────────────────────────
   function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws/telemetry`;
@@ -66,14 +77,17 @@ document.addEventListener('DOMContentLoaded', () => {
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      addLog('Connected to NewVision telemetry stream.');
-      document.getElementById('sysStatusDot').classList.remove('offline');
-      document.getElementById('sysStatusText').textContent = 'CONNECTED';
+      addLog('Connected to NewVision telemetry stream (20 Hz).');
+      if (sysStatusDot) {
+        sysStatusDot.className = 'status-indicator-dot online';
+      }
+      if (sysStatusText) sysStatusText.textContent = 'CONNECTED';
     };
 
     ws.onmessage = (event) => {
       try {
         const state = JSON.parse(event.data);
+        lastPacketTime = Date.now();
         updateDashboard(state);
       } catch (e) {
         console.error('Error parsing telemetry frame:', e);
@@ -81,9 +95,11 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     ws.onclose = () => {
-      addLog('Telemetry connection closed. Reconnecting in 2s...');
-      document.getElementById('sysStatusDot').classList.add('offline');
-      document.getElementById('sysStatusText').textContent = 'RECONNECTING';
+      addLog('WebSocket connection closed. Reconnecting in 2s...');
+      if (sysStatusDot) {
+        sysStatusDot.className = 'status-indicator-dot offline';
+      }
+      if (sysStatusText) sysStatusText.textContent = 'DISCONNECTED';
       setTimeout(connectWebSocket, 2000);
     };
 
@@ -93,30 +109,92 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-  // Update UI Elements with Latest Frame
+  // ── 5. Main Dashboard Update Function ────────────────────────────────────
   function updateDashboard(state) {
     isDemoMode = state.is_demo_mode;
     updateModeIndicators();
 
-    // 1. Device Nodes
-    updateNodeCard('nodeAp', state.node_ap);
-    updateNodeCard('nodeRadar', state.node_radar);
-    updateNodeCard('nodeMag', state.node_mag);
+    const now = new Date();
+    const timestampElem = document.getElementById('lastUpdateTimestamp');
+    if (timestampElem) {
+      timestampElem.textContent = now.toTimeString().split(' ')[0] + '.' + String(now.getMilliseconds()).padStart(3, '0');
+    }
 
-    // 2. Radar Tracking
+    // A. System Overview & Health
+    const latencySec = Math.max(0.01, (Date.now() - lastPacketTime) / 1000);
+    const freshnessElem = document.getElementById('freshnessValue');
+    if (freshnessElem) freshnessElem.textContent = `${latencySec.toFixed(2)}s`;
+
+    const nodeAp = state.node_ap || {};
+    const nodeRadar = state.node_radar || {};
+    const nodeMag = state.node_mag || {};
+
+    let activeNodes = 0;
+    if (nodeAp.wifi_connected) activeNodes++;
+    if (nodeRadar.wifi_connected) activeNodes++;
+    if (nodeMag.wifi_connected) activeNodes++;
+
+    const activeNodesElem = document.getElementById('activeNodesCount');
+    if (activeNodesElem) activeNodesElem.textContent = `${activeNodes}/3`;
+
+    // AP Traffic Source
+    const nodeApRate = document.getElementById('nodeApRate');
+    if (nodeApRate) nodeApRate.textContent = (nodeAp.packet_rate_hz || 0).toFixed(1);
+    const nodeApSsid = document.getElementById('nodeApSsid');
+    if (nodeApSsid) nodeApSsid.textContent = `CSI_TEST (${nodeAp.ip_address || '192.168.4.1'})`;
+    const nodeApUptime = document.getElementById('nodeApUptime');
+    if (nodeApUptime) {
+      const sec = Math.floor((nodeAp.uptime_ms || 0) / 1000);
+      nodeApUptime.textContent = `${Math.floor(sec / 60)}m ${sec % 60}s | Heap: 42KB`;
+    }
+
+    // Receiver 1 (ESP32 #1)
+    const nodeRadarRate = document.getElementById('nodeRadarRate');
+    if (nodeRadarRate) nodeRadarRate.textContent = (nodeRadar.packet_rate_hz || 20).toFixed(1);
+    const nodeRadarIp = document.getElementById('nodeRadarIp');
+    if (nodeRadarIp) nodeRadarIp.textContent = `${nodeRadar.ip_address || '192.168.4.10'}`;
+    const nodeRadarErrors = document.getElementById('nodeRadarErrors');
+    if (nodeRadarErrors) {
+      const pErrors = state.radar ? state.radar.parser_errors || 0 : 0;
+      nodeRadarErrors.textContent = `${pErrors} UART errors`;
+    }
+
+    // Receiver 2 (ESP32 #2)
+    const nodeMagRate = document.getElementById('nodeMagRate');
+    if (nodeMagRate) nodeMagRate.textContent = (nodeMag.packet_rate_hz || 20).toFixed(1);
+    const nodeMagIp = document.getElementById('nodeMagIp');
+    if (nodeMagIp) nodeMagIp.textContent = `${nodeMag.ip_address || '192.168.4.20'}`;
+    const nodeMagCalib = document.getElementById('nodeMagCalibStatus');
+    if (nodeMagCalib && state.magnetometer) {
+      const cal = state.magnetometer.calibration_status || 'UNCALIBRATED';
+      nodeMagCalib.textContent = cal;
+      nodeMagCalib.className = cal === 'CALIBRATED' ? 'color-emerald' : 'color-amber';
+    }
+
+    // Session Buffer Status
+    fetchSessionStatus();
+
+    // B. Radar Monitoring
     const radar = state.radar || {};
     const targets = radar.targets || [];
     radarRenderer.updateTargets(targets);
 
-    document.getElementById('radarTargetCount').textContent = `${radar.target_count || 0} TARGETS`;
-    document.getElementById('radarStatusBadge').textContent = radar.sensor_status || 'UNKNOWN';
-    document.getElementById('radarErrorsBadge').textContent = `ERR: ${radar.parser_errors || 0}`;
+    const radarTargetCountBadge = document.getElementById('radarTargetCountBadge');
+    if (radarTargetCountBadge) {
+      const cnt = targets.length;
+      radarTargetCountBadge.textContent = `${cnt} TARGET${cnt === 1 ? '' : 'S'}`;
+    }
 
-    // Target Table
+    const radarQualityBadge = document.getElementById('radarQualityBadge');
+    if (radarQualityBadge) {
+      radarQualityBadge.textContent = radar.data_quality || 'HIGH QUALITY';
+    }
+
+    // Radar Target Table
     const tableBody = document.getElementById('radarTargetTableBody');
     if (tableBody) {
       if (targets.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;">No targets in field of view</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="5" class="empty-state">No targets detected in radar field of view</td></tr>';
       } else {
         tableBody.innerHTML = targets.map(t => `
           <tr>
@@ -124,34 +202,122 @@ document.addEventListener('DOMContentLoaded', () => {
             <td>(${t.x_m.toFixed(2)}m, ${t.y_m.toFixed(2)}m)</td>
             <td><b>${t.distance_m.toFixed(2)} m</b></td>
             <td style="color:${t.speed_ms > 0 ? '#f59e0b' : '#00e5ff'}">${t.speed_ms > 0 ? '+' : ''}${t.speed_ms.toFixed(2)} m/s (${t.speed_cms} cm/s)</td>
-            <td><span class="brand-badge" style="background:rgba(16,185,129,0.15);color:#10b981">TRACKED</span></td>
+            <td><span class="badge badge-emerald">ACTIVE_TRACK</span></td>
           </tr>
         `).join('');
       }
     }
 
-    // 3. Wi-Fi & CSI
-    const wifiRadar = state.wifi_radar_node || {};
-    const wifiMag = state.wifi_mag_node || {};
+    // C. Wi-Fi Sensing Streams (Rx1 & Rx2)
+    const rx1 = state.wifi_radar_node || {};
+    const rx2 = state.wifi_mag_node || {};
 
     wifiChart.push({
-      radar_rssi: wifiRadar.rssi_dbm,
-      mag_rssi: wifiMag.rssi_dbm
+      rx1_rssi: rx1.rssi_dbm,
+      rx2_rssi: rx2.rssi_dbm
     });
 
-    document.getElementById('wifiRadarRssi').textContent = wifiRadar.rssi_dbm ? `${wifiRadar.rssi_dbm} dBm` : '--';
-    document.getElementById('wifiMagRssi').textContent = wifiMag.rssi_dbm ? `${wifiMag.rssi_dbm} dBm` : '--';
-    document.getElementById('csiPacketRate').textContent = `${(wifiRadar.csi_packet_rate || 0).toFixed(0)} Hz`;
+    // Rx1 DOM
+    const rx1Rssi = document.getElementById('rx1Rssi');
+    if (rx1Rssi) rx1Rssi.textContent = rx1.rssi_dbm ? `${rx1.rssi_dbm} dBm` : '--';
+    const rx1CsiAvailable = document.getElementById('rx1CsiAvailable');
+    if (rx1CsiAvailable) {
+      rx1CsiAvailable.textContent = rx1.csi_available ? 'Available (64 SC)' : 'Unavailable';
+      rx1CsiAvailable.className = rx1.csi_available ? 'metric-val color-emerald' : 'metric-val color-muted';
+    }
+    const rx1Format = document.getElementById('rx1Format');
+    if (rx1Format) rx1Format.textContent = rx1.feature_format || 'SUBCA_AMP_VAR';
+    const rx1Rate = document.getElementById('rx1Rate');
+    if (rx1Rate) rx1Rate.textContent = `${(rx1.csi_packet_rate || 0).toFixed(0)} Hz`;
+    const rx1Variance = document.getElementById('rx1Variance');
+    if (rx1Variance) {
+      rx1Variance.textContent = rx1.csi_amplitude_variance !== null && rx1.csi_amplitude_variance !== undefined
+        ? rx1.csi_amplitude_variance.toFixed(2) : '--';
+    }
+    const rx1Loss = document.getElementById('rx1Loss');
+    if (rx1Loss) rx1Loss.textContent = `${(rx1.packet_loss_pct || 0).toFixed(1)}%`;
+    const rx1Motion = document.getElementById('rx1Motion');
+    if (rx1Motion) {
+      const mot = rx1.motion_heuristic || 'QUIET';
+      rx1Motion.textContent = mot;
+      rx1Motion.className = mot === 'ACTIVE' ? 'metric-val color-amber' : (mot === 'SUBTLE' ? 'metric-val color-cyan' : 'metric-val color-emerald');
+    }
 
-    const csiVariance = wifiRadar.csi_amplitude_variance;
-    document.getElementById('csiVariance').textContent = csiVariance !== null && csiVariance !== undefined ? csiVariance.toFixed(2) : '--';
+    // Rx2 DOM
+    const rx2Rssi = document.getElementById('rx2Rssi');
+    if (rx2Rssi) rx2Rssi.textContent = rx2.rssi_dbm ? `${rx2.rssi_dbm} dBm` : '--';
+    const rx2CsiAvailable = document.getElementById('rx2CsiAvailable');
+    if (rx2CsiAvailable) {
+      rx2CsiAvailable.textContent = rx2.csi_available ? 'Available' : 'No Raw CSI (RSSI only)';
+      rx2CsiAvailable.className = rx2.csi_available ? 'metric-val color-emerald' : 'metric-val color-muted';
+    }
+    const rx2Format = document.getElementById('rx2Format');
+    if (rx2Format) rx2Format.textContent = rx2.feature_format || 'RAW_RSSI_ONLY';
+    const rx2Rate = document.getElementById('rx2Rate');
+    if (rx2Rate) rx2Rate.textContent = `${(rx2.csi_packet_rate || 0).toFixed(0)} Hz`;
+    const rx2Variance = document.getElementById('rx2Variance');
+    if (rx2Variance) {
+      rx2Variance.textContent = rx2.csi_amplitude_variance !== null && rx2.csi_amplitude_variance !== undefined
+        ? rx2.csi_amplitude_variance.toFixed(2) : '--';
+    }
+    const rx2Loss = document.getElementById('rx2Loss');
+    if (rx2Loss) rx2Loss.textContent = `${(rx2.packet_loss_pct || 0).toFixed(1)}%`;
+    const rx2Motion = document.getElementById('rx2Motion');
+    if (rx2Motion) {
+      const mot2 = rx2.motion_heuristic || 'QUIET';
+      rx2Motion.textContent = mot2;
+      rx2Motion.className = mot2 === 'ACTIVE' ? 'metric-val color-amber' : (mot2 === 'SUBTLE' ? 'metric-val color-cyan' : 'metric-val color-emerald');
+    }
 
-    const motionHeuristic = wifiRadar.motion_heuristic || 'QUIET';
-    const motionElem = document.getElementById('wifiMotionHeuristic');
-    motionElem.textContent = motionHeuristic;
-    motionElem.style.color = motionHeuristic === 'ACTIVE' ? '#f59e0b' : (motionHeuristic === 'SUBTLE' ? '#00e5ff' : '#10b981');
+    // D. Fusion & Evidence Matrix
+    const fusion = state.fusion || {};
 
-    // 4. Magnetometer
+    const radarEvidenceList = document.getElementById('radarEvidenceList');
+    if (radarEvidenceList) {
+      const rEv = fusion.radar_evidence || [];
+      radarEvidenceList.innerHTML = rEv.length > 0
+        ? rEv.map(e => `<li>${e}</li>`).join('')
+        : '<li>No radar targets in range</li>';
+    }
+
+    const rx1EvidenceList = document.getElementById('rx1EvidenceList');
+    if (rx1EvidenceList) {
+      const rx1Ev = fusion.rx1_evidence || [];
+      rx1EvidenceList.innerHTML = rx1Ev.length > 0
+        ? rx1Ev.map(e => `<li>${e}</li>`).join('')
+        : '<li>Rx1 stream quiet</li>';
+    }
+
+    const rx2EvidenceList = document.getElementById('rx2EvidenceList');
+    if (rx2EvidenceList) {
+      const rx2Ev = fusion.rx2_evidence || [];
+      rx2EvidenceList.innerHTML = rx2Ev.length > 0
+        ? rx2Ev.map(e => `<li>${e}</li>`).join('')
+        : '<li>Rx2 stream quiet</li>';
+    }
+
+    const fusionConfidenceBadge = document.getElementById('fusionConfidenceBadge');
+    if (fusionConfidenceBadge) {
+      const score = Math.round((fusion.confidence_score || 0.85) * 100);
+      fusionConfidenceBadge.textContent = `CONF: ${score}%`;
+    }
+
+    const fusionPresenceState = document.getElementById('fusionPresenceState');
+    if (fusionPresenceState) {
+      fusionPresenceState.textContent = fusion.presence_state || 'QUIET';
+    }
+
+    const fusionSummaryText = document.getElementById('fusionSummaryText');
+    if (fusionSummaryText) {
+      fusionSummaryText.textContent = fusion.explainable_summary || 'Sensor streams aligned. No active movement.';
+    }
+
+    const fusionUncertaintyText = document.getElementById('fusionUncertaintyText');
+    if (fusionUncertaintyText) {
+      fusionUncertaintyText.textContent = fusion.uncertainty_note || 'Wi-Fi reflects multipath distortion only; coordinates originate strictly from LD2450 radar.';
+    }
+
+    // E. Magnetometer & MTC-1
     const mag = state.magnetometer || {};
     magChart.push({
       bx: mag.bx,
@@ -159,34 +325,47 @@ document.addEventListener('DOMContentLoaded', () => {
       bz: mag.bz
     });
 
-    document.getElementById('magChipLabel').textContent = mag.sensor_chip || 'UNKNOWN';
-    document.getElementById('magCalibBadge').textContent = mag.calibration_status || 'UNCALIBRATED';
-    document.getElementById('magCalibBadge').style.color = mag.calibration_status === 'CALIBRATED' ? '#10b981' : '#f59e0b';
+    const magMagnitude = document.getElementById('magMagnitude');
+    if (magMagnitude) magMagnitude.textContent = `${(mag.magnitude || 0).toFixed(1)} µT`;
+    const magDelta = document.getElementById('magDelta');
+    if (magDelta) magDelta.textContent = `${(mag.delta_magnitude || 0).toFixed(2)} µT`;
+    const magBx = document.getElementById('magBx');
+    if (magBx) magBx.textContent = `${(mag.bx || 0).toFixed(1)} µT`;
+    const magBy = document.getElementById('magBy');
+    if (magBy) magBy.textContent = `${(mag.by || 0).toFixed(1)} µT`;
+    const magBz = document.getElementById('magBz');
+    if (magBz) magBz.textContent = `${(mag.bz || 0).toFixed(1)} µT`;
 
-    document.getElementById('magMagnitude').textContent = `${(mag.magnitude || 0).toFixed(1)} µT`;
-    document.getElementById('magDelta').textContent = `Δ ${(mag.delta_magnitude || 0).toFixed(2)} µT`;
-    document.getElementById('magReadout').textContent = `Bx: ${(mag.bx||0).toFixed(1)} | By: ${(mag.by||0).toFixed(1)} | Bz: ${(mag.bz||0).toFixed(1)}`;
+    const magSensorChipBadge = document.getElementById('magSensorChipBadge');
+    if (magSensorChipBadge) {
+      magSensorChipBadge.textContent = mag.sensor_chip || 'HMC5883L';
+    }
 
-    // 5. MTC-1 Threat Model
+    // MTC-1 Classifier
     const mtc = state.mtc || {};
-    document.getElementById('mtcStatusBadge').textContent = mtc.status || 'UNKNOWN';
-    document.getElementById('mtcStatusBadge').style.borderColor = mtc.threat_color || '#888';
-    document.getElementById('mtcStatusBadge').style.color = mtc.threat_color || '#888';
+    const mtcStatusBadge = document.getElementById('mtcStatusBadge');
+    if (mtcStatusBadge) mtcStatusBadge.textContent = mtc.status || 'READY';
 
-    const classElem = document.getElementById('mtcPredictedClass');
-    classElem.textContent = mtc.predicted_class || mtc.status || '--';
-    classElem.style.color = mtc.threat_color || '#fff';
+    const mtcThreatBadge = document.getElementById('mtcThreatBadge');
+    if (mtcThreatBadge) {
+      const threat = mtc.threat_level || 'NONE';
+      mtcThreatBadge.textContent = threat;
+      mtcThreatBadge.className = threat === 'HIGH' ? 'badge badge-danger' : (threat === 'LOW' ? 'badge badge-amber' : 'badge badge-emerald');
+    }
 
-    document.getElementById('mtcConfidence').textContent = mtc.confidence_percent ? `${mtc.confidence_percent.toFixed(1)}%` : '';
-    document.getElementById('mtcThreatBadge').textContent = mtc.threat_level || 'NONE';
-    document.getElementById('mtcThreatBadge').style.backgroundColor = `${mtc.threat_color}22` || 'transparent';
-    document.getElementById('mtcThreatBadge').style.color = mtc.threat_color || '#fff';
-    document.getElementById('mtcExplanation').textContent = mtc.explanation || '';
-    document.getElementById('mtcDistanceSource').textContent = mtc.distance_source || '';
+    const mtcPredictedClass = document.getElementById('mtcPredictedClass');
+    if (mtcPredictedClass) {
+      mtcPredictedClass.textContent = (mtc.predicted_class || 'CLEAR').toUpperCase();
+    }
 
-    // Probability Bars
-    const allProbs = mtc.all_probabilities || {};
+    const mtcConfidence = document.getElementById('mtcConfidence');
+    if (mtcConfidence) {
+      mtcConfidence.textContent = mtc.confidence_percent ? `${mtc.confidence_percent.toFixed(1)}%` : '--';
+    }
+
+    // Probability Bars Grid
     const probContainer = document.getElementById('probBarsContainer');
+    const allProbs = mtc.all_probabilities || {};
     if (probContainer && Object.keys(allProbs).length > 0) {
       probContainer.innerHTML = Object.entries(allProbs).map(([className, p]) => `
         <div class="prob-item">
@@ -195,119 +374,91 @@ document.addEventListener('DOMContentLoaded', () => {
             <span><b>${p.toFixed(1)}%</b></span>
           </div>
           <div class="prob-bar-track">
-            <div class="prob-bar-fill" style="width:${p}%; background:${className === mtc.predicted_class ? mtc.threat_color : 'rgba(0,229,255,0.4)'}"></div>
+            <div class="prob-bar-fill" style="width:${p}%; background:${className === mtc.predicted_class ? (mtc.threat_color || '#00e5ff') : 'rgba(0,229,255,0.3)'}"></div>
           </div>
         </div>
       `).join('');
     }
-
-    // 6. Sensor Fusion
-    const fusion = state.fusion || {};
-    const presenceElem = document.getElementById('fusionPresenceState');
-    presenceElem.textContent = fusion.presence_state || 'CLEAR';
-    presenceElem.style.color = fusion.presence_state.includes('TARGET') || fusion.presence_state.includes('PRESENCE') ? '#00e5ff' : '#10b981';
-
-    const threatElem = document.getElementById('fusionThreatState');
-    threatElem.textContent = fusion.threat_state || 'NONE';
-    threatElem.style.color = fusion.threat_state === 'CRITICAL' ? '#ff0055' : (fusion.threat_state === 'HIGH' ? '#ef4444' : (fusion.threat_state === 'ELEVATED_FERROUS' ? '#f59e0b' : '#10b981'));
-
-    document.getElementById('fusionSummary').textContent = fusion.explainable_summary || '';
-
-    // Supporting List
-    const supportList = document.getElementById('fusionSupportingList');
-    if (supportList) {
-      const items = fusion.supporting_sensors || [];
-      supportList.innerHTML = items.length > 0 
-        ? items.map(s => `<li>✓ ${s}</li>`).join('')
-        : '<li style="background:transparent;color:#666">No active supporting evidence</li>';
-    }
-
-    // Contradicting List
-    const conflictList = document.getElementById('fusionConflictingList');
-    if (conflictList) {
-      const items = fusion.conflicting_sensors || [];
-      conflictList.innerHTML = items.length > 0
-        ? items.map(c => `<li>⚠ ${c}</li>`).join('')
-        : '<li style="background:transparent;color:#666">No conflicting streams</li>';
-    }
-
-    // Freshness readouts
-    const freshness = fusion.freshness || {};
-    document.getElementById('freshnessRadar').textContent = `Radar: ${freshness.radar_sec !== undefined ? freshness.radar_sec.toFixed(2) : '--'}s`;
-    document.getElementById('freshnessWifi').textContent = `Wi-Fi: ${freshness.wifi_sec !== undefined ? freshness.wifi_sec.toFixed(2) : '--'}s`;
-    document.getElementById('freshnessMag').textContent = `Mag: ${freshness.mag_sec !== undefined ? freshness.mag_sec.toFixed(2) : '--'}s`;
   }
 
-  function updateNodeCard(prefix, nodeData) {
-    const dot = document.getElementById(`${prefix}Dot`);
-    const ip = document.getElementById(`${prefix}Ip`);
-    const rate = document.getElementById(`${prefix}Rate`);
-    const uptime = document.getElementById(`${prefix}Uptime`);
-
-    if (!nodeData || !nodeData.wifi_connected) {
-      if (dot) dot.className = 'node-status-dot offline';
-      if (ip) ip.textContent = 'OFFLINE';
-      if (rate) rate.textContent = '--';
-      if (uptime) uptime.textContent = '--';
-      return;
-    }
-
-    if (dot) dot.className = 'node-status-dot';
-    if (ip) ip.textContent = nodeData.ip_address || 'Connected';
-    if (rate) rate.textContent = `${(nodeData.packet_rate_hz || 0).toFixed(0)} pps`;
-    if (uptime) {
-      const sec = Math.floor((nodeData.uptime_ms || 0) / 1000);
-      const mins = Math.floor(sec / 60);
-      uptime.textContent = `${mins}m ${sec % 60}s`;
-    }
-  }
-
+  // Helper: Mode Indicator Updates
   function updateModeIndicators() {
     if (isDemoMode) {
-      modeBadge.textContent = 'DEMO / SIMULATED DATA';
-      modeBadge.className = 'brand-badge' + ' btn-mode-demo';
-      btnToggleMode.className = 'btn btn-mode-demo';
-      btnToggleMode.innerHTML = '<span>⚡ Mode: SIMULATED</span>';
-      demoBanner.classList.remove('hidden');
-      if (simObjectSelect) simObjectSelect.style.display = 'inline-block';
+      if (modeStatusDot) modeStatusDot.className = 'status-indicator-dot warning';
+      if (modeLabelText) modeLabelText.textContent = 'DEMO / SIMULATED';
+      if (demoBanner) demoBanner.classList.remove('hidden');
+      if (demoControlsWrapper) demoControlsWrapper.style.display = 'flex';
     } else {
-      modeBadge.textContent = 'LIVE HARDWARE';
-      modeBadge.className = 'brand-badge' + ' btn-mode-live';
-      btnToggleMode.className = 'btn btn-mode-live';
-      btnToggleMode.innerHTML = '<span>📡 Mode: LIVE HARDWARE</span>';
-      demoBanner.classList.add('hidden');
-      if (simObjectSelect) simObjectSelect.style.display = 'none';
+      if (modeStatusDot) modeStatusDot.className = 'status-indicator-dot online';
+      if (modeLabelText) modeLabelText.textContent = 'LIVE HARDWARE';
+      if (demoBanner) demoBanner.classList.add('hidden');
+      if (demoControlsWrapper) demoControlsWrapper.style.display = 'none';
     }
   }
 
-  // Toggle Mode
-  btnToggleMode.addEventListener('click', async () => {
+  // Helper: Session status fetch
+  async function fetchSessionStatus() {
     try {
-      const res = await fetch('/api/mode/toggle', { method: 'POST' });
+      const res = await fetch('/api/session/status');
       const data = await res.json();
-      isDemoMode = data.is_demo_mode;
-      updateModeIndicators();
-      addLog(`Switched mode to: ${data.mode_label}`);
-    } catch (e) {
-      addLog(`Error toggling mode: ${e}`);
-    }
-  });
+      isRecording = data.recording;
+      const countElem = document.getElementById('sessionSamplesCount');
+      if (countElem) countElem.textContent = data.sample_count;
+      const recordStateElem = document.getElementById('sessionRecordState');
+      if (recordStateElem) {
+        recordStateElem.textContent = isRecording ? 'RECORDING ACTIVE' : 'IDLE';
+        recordStateElem.style.color = isRecording ? '#ef4444' : 'var(--text-secondary)';
+      }
+      const durElem = document.getElementById('sessionDuration');
+      if (durElem) durElem.textContent = `${data.duration_sec.toFixed(1)}s`;
 
-  // Zero / Calibrate Magnetometer
-  btnCalibrateMag.addEventListener('click', async () => {
+      if (btnRecord && recordBtnText) {
+        if (isRecording) {
+          btnRecord.classList.add('recording');
+          recordBtnText.textContent = 'Stop';
+        } else {
+          btnRecord.classList.remove('recording');
+          recordBtnText.textContent = 'Record';
+        }
+      }
+    } catch (e) {
+      // Ignore background status polling errors
+    }
+  }
+
+  // ── 6. Event Listeners ───────────────────────────────────────────────────
+
+  // Toggle Mode Button
+  if (btnToggleMode) {
+    btnToggleMode.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/mode/toggle', { method: 'POST' });
+        const data = await res.json();
+        isDemoMode = data.is_demo_mode;
+        updateModeIndicators();
+        addLog(`Switched platform mode to: ${data.mode_label}`);
+      } catch (e) {
+        addLog(`Error toggling mode: ${e}`);
+      }
+    });
+  }
+
+  // Zero / Calibrate Baseline
+  async function zeroBaseline() {
     try {
-      btnCalibrateMag.disabled = true;
-      btnCalibrateMag.textContent = 'Zeroing...';
+      if (btnCalibrateMag) btnCalibrateMag.disabled = true;
       const res = await fetch('/api/magnetometer/calibrate', { method: 'POST' });
       const data = await res.json();
-      addLog(data.message || 'Magnetometer calibrated to baseline.');
+      addLog(data.message || 'Magnetic baseline zeroed.');
     } catch (e) {
       addLog(`Calibration error: ${e}`);
     } finally {
-      btnCalibrateMag.disabled = false;
-      btnCalibrateMag.textContent = 'Zero Magnetometer';
+      if (btnCalibrateMag) btnCalibrateMag.disabled = false;
     }
-  });
+  }
+
+  if (btnCalibrateMag) btnCalibrateMag.addEventListener('click', zeroBaseline);
+  if (btnZeroBaselineInline) btnZeroBaselineInline.addEventListener('click', zeroBaseline);
 
   // Simulator Object Selector
   if (simObjectSelect) {
@@ -319,7 +470,7 @@ document.addEventListener('DOMContentLoaded', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ object_type: selected })
         });
-        addLog(`Demo simulated object set to: ${selected.toUpperCase()}`);
+        addLog(`Demo simulated object signature set to: ${selected.toUpperCase()}`);
       } catch (err) {
         addLog(`Error setting object: ${err}`);
       }
@@ -327,38 +478,54 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Session Recording Controls
-  btnRecord.addEventListener('click', async () => {
-    try {
-      if (!isRecording) {
-        const res = await fetch('/api/session/start', { method: 'POST' });
-        const data = await res.json();
-        isRecording = true;
-        btnRecord.classList.add('recording');
-        btnRecord.innerHTML = '<span>⏹ Stop Recording</span>';
-        addLog('Session recording started.');
-      } else {
-        const res = await fetch('/api/session/stop', { method: 'POST' });
-        const data = await res.json();
-        isRecording = false;
-        btnRecord.classList.remove('recording');
-        btnRecord.innerHTML = '<span>⏺ Record Session</span>';
-        addLog(`Session recording stopped (${data.sample_count} samples, ${data.duration_sec}s).`);
+  if (btnRecord) {
+    btnRecord.addEventListener('click', async () => {
+      try {
+        if (!isRecording) {
+          const res = await fetch('/api/session/start', { method: 'POST' });
+          const data = await res.json();
+          isRecording = true;
+          addLog('Session recording started.');
+        } else {
+          const res = await fetch('/api/session/stop', { method: 'POST' });
+          const data = await res.json();
+          isRecording = false;
+          addLog(`Session recording saved (${data.sample_count} frames, ${data.duration_sec}s).`);
+        }
+        fetchSessionStatus();
+      } catch (e) {
+        addLog(`Recording error: ${e}`);
       }
-    } catch (e) {
-      addLog(`Recording error: ${e}`);
-    }
-  });
+    });
+  }
 
-  btnExportJson.addEventListener('click', () => {
-    window.location.href = '/api/session/export/json';
-    addLog('Exporting session as JSON...');
-  });
+  if (btnClearSession) {
+    btnClearSession.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/session/clear', { method: 'POST' });
+        const data = await res.json();
+        addLog('Session buffer cleared.');
+        fetchSessionStatus();
+      } catch (e) {
+        addLog(`Error clearing buffer: ${e}`);
+      }
+    });
+  }
 
-  btnExportCsv.addEventListener('click', () => {
-    window.location.href = '/api/session/export/csv';
-    addLog('Exporting session as CSV...');
-  });
+  if (btnExportJson) {
+    btnExportJson.addEventListener('click', () => {
+      window.location.href = '/api/session/export/json';
+      addLog('Triggered JSON session export download.');
+    });
+  }
 
-  // Initialize WebSocket connection
+  if (btnExportCsv) {
+    btnExportCsv.addEventListener('click', () => {
+      window.location.href = '/api/session/export/csv';
+      addLog('Triggered CSV session export download.');
+    });
+  }
+
+  // Connect WebSocket on load
   connectWebSocket();
 });

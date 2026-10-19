@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NewView — Spatial Sensing & 2D/3D Tracking Workspace</title>
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body class="page-newview">
+
+  <!-- Top Navigation Bar -->
+  <header class="topbar">
+    <div class="brand-group">
+      <div class="brand">
+        <span class="brand-symbol">◈</span>
+        <span class="brand-name">NEWVIEW</span>
+        <span class="brand-sub">SPATIAL WORKSPACE</span>
+      </div>
+
+      <!-- Main Navigation Tabs: NewVision vs NewView -->
+      <nav class="nav-tabs" aria-label="Main Navigation">
+        <a href="/" class="nav-tab">
+          <span class="nav-icon">📊</span>
+          <span>NewVision</span>
+          <span class="nav-badge">SYSTEM</span>
+        </a>
+        <a href="/newview" class="nav-tab active" aria-current="page">
+          <span class="nav-icon">🧭</span>
+          <span>NewView</span>
+          <span class="nav-badge highlight">2D / 3D SPATIAL</span>
+        </a>
+      </nav>
+    </div>
+
+    <!-- Global Controls & Status Indicator -->
+    <div class="topbar-actions">
+      <!-- Mode Badge (SIMULATED vs LIVE) -->
+      <button id="btnToggleMode" class="btn btn-mode-demo" title="Toggle between simulated demo and live hardware">
+        <span id="modeStatusDot" class="status-indicator-dot warning"></span>
+        <span id="modeLabelText">DEMO / SIMULATED</span>
+      </button>
+
+      <!-- Recording Quick Toggle -->
+      <button id="btnRecord" class="btn btn-record" title="Record session">
+        <span class="record-dot"></span>
+        <span id="recordBtnText">Record</span>
+      </button>
+
+      <!-- Connection Indicator -->
+      <div class="conn-pill" title="Backend WebSocket telemetry stream">
+        <div id="sysStatusDot" class="status-indicator-dot online"></div>
+        <span id="sysStatusText">CONNECTED</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Demo Notice Banner -->
+  <aside id="demoBanner" class="system-alert-banner warning" role="alert">
+    <div class="alert-content">
+      <span class="alert-icon">⚠️</span>
+      <span class="alert-title">SIMULATED SPATIAL ENVIRONMENT:</span>
+      <span class="alert-desc">Operating in deterministic simulation mode. Target positions originate from radar simulation models; Wi-Fi activity reflects channel perturbation baseline.</span>
+    </div>
+    <span class="badge badge-amber">SIMULATED SCENE</span>
+  </aside>
+
+  <!-- Main NewView Workspace Container -->
+  <main class="dashboard-shell" style="padding-bottom: 24px;">
+
+    <div class="newview-layout">
+
+      <!-- ── PRIMARY SPATIAL VIEWPORT (LEFT / CENTER) ─────────────────────── -->
+      <section class="viewport-panel" aria-label="Spatial Visualization Canvas">
+
+        <!-- Viewport Toolbar (Floating overlay) -->
+        <div class="viewport-toolbar">
+          <div class="toolbar-group">
+            <button id="btnView2D" class="view-toggle-btn active" title="Top-down 2D Radar Plan View">2D PLAN</button>
+            <button id="btnView3D" class="view-toggle-btn" title="Interactive 3D Isometric Orbit View">3D ORBIT</button>
+          </div>
+
+          <div class="toolbar-group">
+            <span class="control-label">RANGE:</span>
+            <select id="rangeSelect" class="form-select" title="Adjust spatial viewing range">
+              <option value="3">3.0 meters (Near)</option>
+              <option value="6" selected>6.0 meters (Standard)</option>
+              <option value="10">10.0 meters (Far)</option>
+            </select>
+          </div>
+
+          <div class="toolbar-group">
+            <button id="btnResetCamera" class="btn btn-tiny" title="Reset camera view to center">⟲ Reset View</button>
+          </div>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="canvas-container" id="canvasContainer">
+          <canvas id="spatialCanvas" class="canvas-spatial"></canvas>
+        </div>
+
+        <!-- Legend Overlay (Bottom Left) -->
+        <div class="viewport-overlay-legend">
+          <div class="legend-item">
+            <span class="legend-swatch" style="background: #00e5ff; box-shadow: 0 0 6px #00e5ff;"></span>
+            <span>LD2450 Radar Target (Measured Position)</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-swatch" style="background: #10b981;"></span>
+            <span>Target Velocity Vector (Radial Speed)</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-swatch" style="background: rgba(0, 229, 255, 0.4);"></span>
+            <span>Historical Trail (Track Persistence)</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-swatch" style="background: #f59e0b; border: 1px dashed #f59e0b;"></span>
+            <span>Wi-Fi Activity Ellipse (Multipath Heuristic — Not Position)</span>
+          </div>
+          <div class="legend-item">
+            <span class="legend-swatch" style="background: #a855f7;"></span>
+            <span>Sensor Anchors (Radar, AP Tx, Rx1, Rx2)</span>
+          </div>
+        </div>
+
+        <!-- Navigation Controls Hint (Bottom Right) -->
+        <div class="viewport-overlay-controls">
+          <span id="navControlsHint">2D Mode: Drag to Pan | Scroll to Zoom</span>
+        </div>
+      </section>
+
+      <!-- ── SIDEBAR PANELS (RIGHT) ───────────────────────────────────────── -->
+      <aside class="newview-sidebar" aria-label="Spatial Telemetry & Target Details">
+
+        <!-- 1. Live Sensor Status & Freshness -->
+        <div class="sidebar-section">
+          <div class="sidebar-title">
+            <span>SENSOR HEALTH</span>
+            <span id="sidebarLatencyBadge" class="badge badge-emerald">0.05s FRESH</span>
+          </div>
+          <div class="receiver-metrics-list">
+            <div class="metric-row">
+              <span class="metric-name">Radar (LD2450):</span>
+              <span id="sideRadarStatus" class="metric-val color-cyan">TRACKING (20 FPS)</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-name">Receiver 1 (ESP32 #1):</span>
+              <span id="sideRx1Status" class="metric-val color-cyan">CSI ACTIVE (-46 dBm)</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-name">Receiver 2 (ESP32 #2):</span>
+              <span id="sideRx2Status" class="metric-val color-purple">RSSI ONLY (-49 dBm)</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-name">AP Transmitter (NodeMCU):</span>
+              <span id="sideApStatus" class="metric-val">CH 6 (100 PPS)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Target Inspector -->
+        <div class="sidebar-section">
+          <div class="sidebar-title">
+            <span>RADAR TARGETS</span>
+            <span id="sideTargetCountBadge" class="badge badge-cyan">1 ACTIVE</span>
+          </div>
+
+          <!-- Target Selection List -->
+          <div id="targetSelectList" class="target-select-list">
+            <div class="target-card-select selected" data-target-id="1">
+              <div>
+                <b style="color: #00e5ff;">Target #1</b>
+                <div style="font-size: 10px; color: var(--text-muted);">Range: 2.45 m | Speed: 0.35 m/s</div>
+              </div>
+              <span class="badge badge-emerald">TRACKED</span>
+            </div>
+          </div>
+
+          <!-- Selected Target Metric Details -->
+          <div class="receiver-metrics-list" style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 6px;">
+            <div class="metric-row">
+              <span class="metric-name">Target ID:</span>
+              <span id="detailTargetId" class="metric-val color-cyan">#1</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-name">Coordinates (X, Y):</span>
+              <span id="detailCoords" class="metric-val">0.82m, 2.31m</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-name">Direct Distance:</span>
+              <span id="detailDistance" class="metric-val">2.45 meters</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-name">Radial Speed:</span>
+              <span id="detailSpeed" class="metric-val color-amber">+0.35 m/s (35 cm/s)</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-name">History Trail:</span>
+              <span id="detailTrailPoints" class="metric-val">60 points</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Toggleable Evidence & Visualization Layers -->
+        <div class="sidebar-section">
+          <div class="sidebar-title">
+            <span>VISUALIZATION LAYERS</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <label class="toggle-switch-row">
+              <span>Radar Target Points</span>
+              <input type="checkbox" id="layerTargets" class="checkbox-custom" checked>
+            </label>
+            <label class="toggle-switch-row">
+              <span>Target History Trails</span>
+              <input type="checkbox" id="layerTrails" class="checkbox-custom" checked>
+            </label>
+            <label class="toggle-switch-row">
+              <span>Velocity Heading Vectors</span>
+              <input type="checkbox" id="layerVelocity" class="checkbox-custom" checked>
+            </label>
+            <label class="toggle-switch-row">
+              <span>Sensor Hardware Anchors</span>
+              <input type="checkbox" id="layerAnchors" class="checkbox-custom" checked>
+            </label>
+            <label class="toggle-switch-row">
+              <span>Wi-Fi Activity Ellipse (Fresnel Zone)</span>
+              <input type="checkbox" id="layerWifiActivity" class="checkbox-custom" checked>
+            </label>
+            <label class="toggle-switch-row">
+              <span>Cartesian & Polar Grid</span>
+              <input type="checkbox" id="layerGrid" class="checkbox-custom" checked>
+            </label>
+          </div>
+        </div>
+
+        <!-- 4. Multimodal Fusion Synthesis -->
+        <div class="sidebar-section">
+          <div class="sidebar-title">
+            <span>FUSION STATE</span>
+            <span id="sideFusionBadge" class="badge badge-emerald">CONF 88%</span>
+          </div>
+          <div class="fusion-hero-box" style="margin-top: 4px;">
+            <div class="fusion-state-label">SPATIAL ESTIMATE</div>
+            <div id="sideFusionState" class="fusion-state-val color-cyan">MOVING_TARGET</div>
+            <div id="sideFusionDesc" class="fusion-summary-desc">
+              Radar target tracks spatial coordinate. Wi-Fi subcarrier variance corroborates channel disturbance.
+            </div>
+          </div>
+          <div class="fusion-uncertainty-box" style="margin-top: 6px;">
+            <span class="uncertainty-title">SPATIAL UNCERTAINTY:</span>
+            <span id="sideUncertaintyNote" class="uncertainty-text">
+              Wi-Fi variance does NOT supply 3D coordinates. Target position is solely millimeter-wave radar reference.
+            </span>
+          </div>
+        </div>
+
+        <!-- 5. Spatial Hardware Calibration (Configurable Anchors) -->
+        <details class="sidebar-section" style="cursor: pointer;">
+          <summary class="sidebar-title" style="cursor: pointer;">
+            <span>📐 SPATIAL CALIBRATION</span>
+            <span class="badge badge-cyan">CONFIG</span>
+          </summary>
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+            <div class="metric-row">
+              <span class="metric-name">Radar Origin:</span>
+              <span class="metric-val">(0.00, 0.00) m</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-name">Tx AP:</span>
+              <span id="calibTxPos" class="metric-val">(0.00, 4.00) m</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-name">Rx1 (ESP32 #1):</span>
+              <span id="calibRx1Pos" class="metric-val">(-1.50, 2.50) m</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-name">Rx2 (ESP32 #2):</span>
+              <span id="calibRx2Pos" class="metric-val">(1.50, 2.50) m</span>
+            </div>
+            <button id="btnResetCalibration" class="btn btn-tiny" style="margin-top: 4px;">Reset Default Geometry</button>
+          </div>
+        </details>
+
+      </aside>
+
+    </div>
+
+  </main>
+
+  <!-- Scripts -->
+  <script src="/static/js/newview.js"></script>
+</body>
+</html>

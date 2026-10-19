@@ -50,12 +50,15 @@ class DemoSimulator:
             "clear": 0.02
         }
 
+        self.track_history = []
+
     def set_object_type(self, obj_type: str):
         if obj_type in self.moment_map:
             self.simulated_object_mode = obj_type
 
     def generate_tick(self, now: Optional[float] = None) -> SystemConsolidatedState:
-        t = (now or time.time()) - self.start_time
+        now_ts = now or time.time()
+        t = now_ts - self.start_time
         
         self.seq_nodemcu += 1
         self.seq_esp32_radar += 1
@@ -98,12 +101,27 @@ class DemoSimulator:
             resolution_mm=150,
             is_valid=True
         )
+
+        # Track history update (limit to last 60 points)
+        self.track_history.append({
+            "target_id": 1,
+            "x": x_m,
+            "y": y_m,
+            "z": 1.1, # Estimated human torso height
+            "speed_ms": speed_ms,
+            "timestamp": now_ts
+        })
+        if len(self.track_history) > 60:
+            self.track_history.pop(0)
         
         radar_telemetry = RadarTelemetry(
             target_count=1,
             targets=[target],
             sensor_status="ACTIVE",
-            parser_errors=0
+            data_quality="HIGH",
+            connection_status="CONNECTED",
+            parser_errors=0,
+            track_history=list(self.track_history)
         )
         
         node_radar = DeviceDiagnostics(
@@ -118,22 +136,30 @@ class DemoSimulator:
             packet_rate_hz=20.0
         )
 
-        # Wi-Fi CSI for Radar Node: variance rises when target is moving faster
+        # Wi-Fi CSI for Receiver 1 (ESP32 #1, physical coords x=-0.8, y=0.0):
+        # Captures CSI subcarriers with amplitude variance reflecting target speed
         motion_factor = abs(speed_ms)
         csi_var_r = round(0.5 + 4.5 * motion_factor + 0.2 * math.sin(3.0 * t), 3)
         wifi_radar = WiFiMetrics(
+            receiver_id="rx1",
             rssi_dbm=int(-46 + 4 * math.sin(0.2 * t)),
+            raw_rssi=int(-46 + 4 * math.sin(0.2 * t)),
+            csi_available=True,
+            feature_format="SUBCA_AMP_VAR (64 SC)",
             csi_packet_count=self.seq_esp32_radar * 5,
             csi_packet_rate=100.0,
             csi_amplitude_variance=csi_var_r,
+            derived_variance=csi_var_r,
+            packet_loss_pct=0.1,
+            timestamp_quality="GOOD",
+            connection_status="CONNECTED",
             motion_heuristic="ACTIVE" if csi_var_r > 2.0 else "SUBTLE",
             is_model_inferred=False
         )
 
-        # 3. ESP32 #2 Magnetometer + CSI Simulation
+        # 3. ESP32 #2 Magnetometer + Receiver 2 Simulation
         # Dipole perturbation from target: B_anomaly ∝ m / r^3
         m = self.moment_map.get(self.simulated_object_mode, 0.4)
-        # Perturbation in uT (Earth is ~50 uT; near target ~0.5m might produce 5-15 uT disturbance)
         pert = (m * 15.0) / (dist_m ** 3)
         pert_x = round(pert * math.cos(0.5 * t), 3)
         pert_y = round(pert * math.sin(0.5 * t), 3)
@@ -172,11 +198,23 @@ class DemoSimulator:
             packet_rate_hz=20.0
         )
 
+        # Receiver 2 (ESP32 #2, physical coords x=+0.8, y=0.0):
+        # Raw RSSI stream with derived rolling variance (honestly labeled: RAW_RSSI_ONLY)
+        raw_rssi_2 = int(-49 + 3 * math.cos(0.3 * t))
+        derived_var_2 = round(0.4 + 2.2 * motion_factor, 3)
         wifi_mag = WiFiMetrics(
-            rssi_dbm=int(-48 + 3 * math.cos(0.3 * t)),
+            receiver_id="rx2",
+            rssi_dbm=raw_rssi_2,
+            raw_rssi=raw_rssi_2,
+            csi_available=False, # Explicitly distinct from Rx1: RSSI only!
+            feature_format="RAW_RSSI_ONLY",
             csi_packet_count=self.seq_esp32_mag * 5,
             csi_packet_rate=100.0,
-            csi_amplitude_variance=round(0.4 + 3.0 * motion_factor, 3),
+            csi_amplitude_variance=None,
+            derived_variance=derived_var_2,
+            packet_loss_pct=0.3,
+            timestamp_quality="GOOD",
+            connection_status="CONNECTED",
             motion_heuristic="ACTIVE" if motion_factor > 0.3 else "QUIET",
             is_model_inferred=False
         )
