@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NewVision Spatial Calibration Configuration",
+  "coordinate_frame": {
+    "type": "Cartesian Right-Handed Metric",
+    "origin": "LD2450 Radar Phase Center (0.0, 0.0, 0.0)",
+    "axes": {
+      "+X": "Lateral Right (meters)",
+      "+Y": "Forward Range (meters)",
+      "+Z": "Altitude (meters)"
+    },
+    "units": "meters",
+    "max_range_m": 6.0,
+    "azimuth_fov_deg": 120.0
+  },
+  "anchors": {
+    "radar": {
+      "device_id": "esp32_radar_csi",
+      "label": "LD2450 Radar",
+      "type": "RADAR",
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "azimuth_heading_deg": 0.0,
+      "fov_deg": 120.0
+    },
+    "tx": {
+      "device_id": "nodemcu_ap",
+      "label": "NodeMCU AP Tx",
+      "type": "TX",
+      "x": 0.0,
+      "y": 5.0,
+      "z": 0.8,
+      "antenna_type": "Omnidirectional PCB Trace",
+      "polarization": "Vertical"
+    },
+    "rx1": {
+      "device_id": "esp32_radar_csi",
+      "label": "Rx1 (ESP32 #1)",
+      "type": "RX1",
+      "x": -2.0,
+      "y": 3.0,
+      "z": 0.8,
+      "antenna_type": "Omnidirectional 3dBi Monopole",
+      "polarization": "Vertical",
+      "csi_capable": true
+    },
+    "rx2": {
+      "device_id": "esp32_mag_csi",
+      "label": "Rx2 (ESP32 #2)",
+      "type": "RX2",
+      "x": 1.5,
+      "y": 2.5,
+      "z": 0.8,
+      "antenna_type": "Omnidirectional 3dBi Monopole",
+      "polarization": "Vertical",
+      "csi_capable": false
+    }
+  },
+  "clock_synchronization": {
+    "protocol": "Host-Receipt Delta Offset Compensation",
+    "host_sync_clock": "monotonic_system_time",
+    "estimated_jitter_ms": 3.5,
+    "max_allowed_skew_ms": 150.0
+  },
+  "wifi_spatial_estimation": {
+    "status": "EXPERIMENTAL_ACTIVITY_ONLY",
+    "disclaimer": "Wi-Fi subcarrier variance reflects multipath channel perturbation and is NOT calibrated for trilateration or AoA localization without an antenna array."
+  }
+}

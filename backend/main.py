@@ -243,27 +243,41 @@ async def websocket_telemetry_endpoint(websocket: WebSocket):
 
 # ── Spatial Calibration Endpoints ──────────────────────────────────────────
 
+from backend.services.calibration import calibration_service
+
 @app.get("/api/calibration/spatial")
 def api_get_spatial_calibration():
     state = live_hardware_manager.current_state if not SYSTEM_STATE["is_demo_mode"] else demo_simulator.generate_tick()
+    anchors = calibration_service.get_anchors()
     return {
-        "rx1_position": state.rx1_position,
-        "rx2_position": state.rx2_position,
-        "tx_position": state.tx_position,
-        "radar_position": state.radar_position
+        "rx1_position": anchors.get("rx1", state.rx1_position),
+        "rx2_position": anchors.get("rx2", state.rx2_position),
+        "tx_position": anchors.get("tx", state.tx_position),
+        "radar_position": anchors.get("radar", state.radar_position),
+        "coordinate_frame": calibration_service.config.get("coordinate_frame")
     }
 
 @app.post("/api/calibration/spatial")
 def api_update_spatial_calibration(config: dict):
+    updates = {}
     if "rx1_position" in config:
         live_hardware_manager.current_state.rx1_position = config["rx1_position"]
+        updates["rx1"] = config["rx1_position"]
     if "rx2_position" in config:
         live_hardware_manager.current_state.rx2_position = config["rx2_position"]
+        updates["rx2"] = config["rx2_position"]
     if "tx_position" in config:
         live_hardware_manager.current_state.tx_position = config["tx_position"]
+        updates["tx"] = config["tx_position"]
     if "radar_position" in config:
         live_hardware_manager.current_state.radar_position = config["radar_position"]
-    return {"success": True, "message": "Spatial calibration updated"}
+        updates["radar"] = config["radar_position"]
+        
+    if updates:
+        calibration_service.update_anchors(updates)
+        
+    return {"success": True, "message": "Spatial calibration updated and saved"}
+
 
 # ── Dashboard UI Serving ───────────────────────────────────────────────────
 

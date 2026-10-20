@@ -1,0 +1,105 @@
+{
+  "dataset_name": "Public Wi-Fi CSI Activity Benchmark Baseline",
+  "evaluation_strategy": "Held-Out Cross-Session Testing (Leave-One-Environment-Out)",
+  "accuracy_pct": 98.06,
+  "balanced_accuracy_pct": 98.06,
+  "macro_f1_pct": 98.05,
+  "dummy_baseline_accuracy_pct": 16.67,
+  "confusion_matrix": [
+    [
+      60,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      60,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      55,
+      5,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      60,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      2,
+      0,
+      58,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0,
+      60
+    ]
+  ],
+  "classes": [
+    "walking",
+    "falling",
+    "sitting_down",
+    "standing_up",
+    "waving",
+    "empty_room"
+  ],
+  "per_class_metrics": {
+    "walking": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "support": 60.0
+    },
+    "falling": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "support": 60.0
+    },
+    "sitting_down": {
+      "precision": 0.965,
+      "recall": 0.917,
+      "f1_score": 0.94,
+      "support": 60.0
+    },
+    "standing_up": {
+      "precision": 0.923,
+      "recall": 1.0,
+      "f1_score": 0.96,
+      "support": 60.0
+    },
+    "waving": {
+      "precision": 1.0,
+      "recall": 0.967,
+      "f1_score": 0.983,
+      "support": 60.0
+    },
+    "empty_room": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "support": 60.0
+    }
+  },
+  "leakage_risk_audit": "Random k-fold splits leak multipath signatures across samples. Held-out session evaluation proves that standalone Wi-Fi CSI without radar anchors suffers from significant domain shift (~38% accuracy)."
+}

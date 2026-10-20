@@ -106,11 +106,11 @@ class SensorFusionEngine:
 
         # Evaluate Rx1
         if wifi_radar and (now - wifi_updated_at < self.stale_threshold_sec):
-            rx1_evidence.append(f"RSSI: {wifi_radar.rssi_dbm} dBm ({wifi_radar.connection_status})")
-            rx1_evidence.append(f"CSI Format: {wifi_radar.feature_format}")
-            rx1_evidence.append(f"Packet Rate: {wifi_radar.csi_packet_rate:.0f} Hz (Loss: {wifi_radar.packet_loss_pct:.1f}%)")
+            rx1_evidence.append(f"Rx1 RSSI: {wifi_radar.rssi_dbm} dBm ({wifi_radar.connection_status})")
+            rx1_evidence.append(f"Rx1 CSI Format: {wifi_radar.feature_format}")
+            rx1_evidence.append(f"Rx1 Packet Rate: {wifi_radar.csi_packet_rate:.0f} Hz (Loss: {wifi_radar.packet_loss_pct:.1f}%)")
             if wifi_radar.csi_amplitude_variance is not None:
-                rx1_evidence.append(f"Variance: {wifi_radar.csi_amplitude_variance:.2f} ({wifi_radar.motion_heuristic})")
+                rx1_evidence.append(f"Rx1 Variance: {wifi_radar.csi_amplitude_variance:.2f} ({wifi_radar.motion_heuristic})")
             if wifi_radar.motion_heuristic in ["ACTIVE", "SUBTLE"]:
                 wifi_activity_noted = True
                 supporting.append(f"Rx1 CSI subcarrier variance elevated ({wifi_radar.motion_heuristic})")
@@ -119,16 +119,17 @@ class SensorFusionEngine:
 
         # Evaluate Rx2
         if wifi_mag and (now - wifi_updated_at < self.stale_threshold_sec):
-            rx2_evidence.append(f"RSSI: {wifi_mag.rssi_dbm} dBm ({wifi_mag.connection_status})")
-            rx2_evidence.append(f"CSI Format: {wifi_mag.feature_format}")
-            rx2_evidence.append(f"Packet Rate: {wifi_mag.csi_packet_rate:.0f} Hz")
+            rx2_evidence.append(f"Rx2 RSSI: {wifi_mag.rssi_dbm} dBm ({wifi_mag.connection_status})")
+            rx2_evidence.append(f"Rx2 CSI Format: {wifi_mag.feature_format}")
+            rx2_evidence.append(f"Rx2 Packet Rate: {wifi_mag.csi_packet_rate:.0f} Hz")
             if wifi_mag.csi_amplitude_variance is not None:
-                rx2_evidence.append(f"Variance: {wifi_mag.csi_amplitude_variance:.2f} ({wifi_mag.motion_heuristic})")
+                rx2_evidence.append(f"Rx2 Variance: {wifi_mag.csi_amplitude_variance:.2f} ({wifi_mag.motion_heuristic})")
             if wifi_mag.motion_heuristic in ["ACTIVE", "SUBTLE"]:
                 wifi_activity_noted = True
                 supporting.append(f"Rx2 Wi-Fi activity elevated ({wifi_mag.motion_heuristic})")
         else:
             rx2_evidence.append("Rx2 offline or stale")
+
 
         if not wifi_active:
             contradicting.append("Wi-Fi telemetry stale or offline")

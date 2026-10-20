@@ -18,6 +18,9 @@ class DeviceDiagnostics(BaseModel):
     ip_address: Optional[str] = None
     parser_errors: int = 0
     packet_rate_hz: float = 0.0
+    clock_offset_ms: Optional[float] = Field(default=None, description="Host vs device timestamp clock offset in ms")
+    duplicate_packets: int = Field(default=0, description="Count of duplicate packets received")
+    out_of_order_packets: int = Field(default=0, description="Count of out-of-order sequence packets received")
 
 class WiFiMetrics(BaseModel):
     receiver_id: str = Field(default="rx1", description="Receiver identifier: 'rx1' (Radar node) or 'rx2' (Mag node)")

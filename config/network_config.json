@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NewVision System Network & Telemetry Configuration",
+  "description": "Network configuration, IP addressing plan, and telemetry ports with zero IP conflicts.",
+  "network": {
+    "subnet": "192.168.4.0/24",
+    "netmask": "255.255.255.0",
+    "ap_channel": 6,
+    "ap_ssid": "CSI_TEST",
+    "ap_password_env_var": "NEWVISION_AP_PASSWORD",
+    "ap_password_default": "csi_sensing_pass"
+  },
+  "nodes": {
+    "ap_traffic_source": {
+      "device_id": "nodemcu_ap",
+      "hardware": "NodeMCU ESP8266 (ESP-12E)",
+      "ip_address": "192.168.4.1",
+      "role": "Wi-Fi SoftAP & High-Rate CSI Traffic Source",
+      "traffic_mode": "unicast_round_robin",
+      "packet_interval_ms": 10,
+      "traffic_rate_hz": 100.0,
+      "traffic_port": 4210,
+      "telemetry_port": 5005,
+      "serial_baud": 115200
+    },
+    "host_laptop": {
+      "device_id": "host_laptop",
+      "hardware": "Laptop (Kali Linux / macOS)",
+      "ip_address": "192.168.4.2",
+      "role": "Telemetry Ingestion, Fusion, Synchronization & Web Serving",
+      "udp_listener_port": 5005,
+      "http_server_port": 8000,
+      "websocket_push_rate_hz": 20.0
+    },
+    "receiver_1_radar": {
+      "device_id": "esp32_radar_csi",
+      "hardware": "ESP32-WROOM-32 + HLK-LD2450 24 GHz Radar",
+      "ip_address": "192.168.4.10",
+      "role": "Receiver 1 (Millimeter-wave Radar Target Tracking & CSI Subcarriers)",
+      "uart_interface": "UART2 (RX: GPIO 16, TX: GPIO 17)",
+      "uart_baud": 256000,
+      "telemetry_destination_ip": "192.168.4.2",
+      "telemetry_destination_port": 5005,
+      "telemetry_rate_hz": 20.0,
+      "csi_subcarriers": 64,
+      "csi_feature_format": "SUBCA_AMP_VAR"
+    },
+    "receiver_2_magnetometer": {
+      "device_id": "esp32_mag_csi",
+      "hardware": "ESP32-WROOM-32 + MPU-9250/AK8963 Magnetometer",
+      "ip_address": "192.168.4.20",
+      "role": "Receiver 2 (3-Axis Magnetic Anomaly Sensing & RSSI Telemetry)",
+      "i2c_interface": "I2C0 (SDA: GPIO 21, SCL: GPIO 22)",
+      "i2c_frequency_hz": 400000,
+      "telemetry_destination_ip": "192.168.4.2",
+      "telemetry_destination_port": 5005,
+      "telemetry_rate_hz": 20.0,
+      "csi_feature_format": "RAW_RSSI_ONLY"
+    }
+  },
+  "ip_conflict_prevention": {
+    "status": "VERIFIED_NO_CONFLICTS",
+    "address_allocation": {
+      "192.168.4.1": "AP Gateway (NodeMCU ESP8266)",
+      "192.168.4.2": "Host Ingestion Laptop",
+      "192.168.4.10": "ESP32 #1 Radar Node (Rx1)",
+      "192.168.4.20": "ESP32 #2 Magnetometer Node (Rx2)"
+    }
+  }
+}

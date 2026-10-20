@@ -72,3 +72,49 @@ def test_stream_parser_fragmented_and_garbage():
     res2 = parser.feed(chunk2)
     assert len(res2) == 1
     assert res2[0].target_count == 1
+
+def test_tracker_continuity_and_coasting():
+    from backend.parsers.ld2450 import LD2450Tracker
+    from backend.schemas import RadarTarget
+    
+    tracker = LD2450Tracker(max_misses=3, max_distance_gate=1.0, dt=0.05)
+    
+    # Frame 1: Target detected at X=0.5m, Y=2.0m, moving +0.2 m/s
+    t1 = RadarTarget(target_id=1, x_mm=500, y_mm=2000, x_m=0.5, y_m=2.0, distance_m=2.06, speed_cms=20, speed_ms=0.2, resolution_mm=100)
+    out1 = tracker.update([t1])
+    assert len(out1) == 1
+    assert out1[0].target_id == 1
+    assert out1[0].x_m == pytest.approx(0.5, 0.05)
+    
+    # Frame 2: Target moves to X=0.51m, Y=2.01m
+    t2 = RadarTarget(target_id=1, x_mm=510, y_mm=2010, x_m=0.51, y_m=2.01, distance_m=2.07, speed_cms=20, speed_ms=0.2, resolution_mm=100)
+    out2 = tracker.update([t2])
+    assert len(out2) == 1
+    assert out2[0].target_id == 1
+    
+    # Frame 3: Dropout! No radar measurement (e.g. multipath cancellation)
+    out3 = tracker.update([])
+    assert len(out3) == 1  # Still coasting!
+    assert out3[0].target_id == 1  # Track ID preserved
+    
+    # Frame 4: Target reappears at X=0.53m, Y=2.03m
+    t4 = RadarTarget(target_id=1, x_mm=530, y_mm=2030, x_m=0.53, y_m=2.03, distance_m=2.09, speed_cms=20, speed_ms=0.2, resolution_mm=100)
+    out4 = tracker.update([t4])
+    assert len(out4) == 1
+    assert out4[0].target_id == 1  # Re-associated without ID jumping!
+    
+    # 4 consecutive misses -> track dropped
+    tracker.update([])
+    tracker.update([])
+    tracker.update([])
+    out_lost = tracker.update([])
+    assert len(out_lost) == 0
+
+def test_stream_parser_malformed_frames():
+    parser = LD2450StreamParser(enable_tracking_filter=False)
+    # Header correct, but tail corrupted
+    bad_frame = bytes([0xAA, 0xFF, 0x03, 0x00]) + bytes([0x00]*24) + bytes([0x12, 0x34])
+    res = parser.feed(bad_frame)
+    assert len(res) == 0
+    assert parser.error_count > 0
+

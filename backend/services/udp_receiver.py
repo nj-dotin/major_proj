@@ -19,10 +19,11 @@ from backend.schemas import (
     SystemConsolidatedState, 
     DeviceDiagnostics, 
     RadarTelemetry, 
+    RadarTarget,
     WiFiMetrics, 
     MagnetometerTelemetry
 )
-from backend.parsers.ld2450 import LD2450StreamParser
+from backend.parsers.ld2450 import LD2450StreamParser, LD2450Tracker
 from backend.parsers.magnetometer import MagnetometerProcessor
 from backend.parsers.csi import CSIProcessor
 from backend.models.mtc1_loader import mtc1_service
@@ -78,20 +79,49 @@ class LiveHardwareStateManager:
         self.mag_processor = MagnetometerProcessor()
         self.csi_processor_radar = CSIProcessor()
         self.csi_processor_mag = CSIProcessor()
+        self.radar_tracker = LD2450Tracker()
         
         self.current_state = SystemConsolidatedState(is_demo_mode=False)
         self.last_update_radar = 0.0
         self.last_update_mag = 0.0
         self.last_update_ap = 0.0
         self.last_update_wifi = 0.0
+
+        # Sequence and timing tracking per device
+        self.device_stats = {
+            "nodemcu_ap": {"last_seq": 0, "duplicates": 0, "out_of_order": 0, "clock_offset_ms": 0.0},
+            "esp32_radar_csi": {"last_seq": 0, "duplicates": 0, "out_of_order": 0, "clock_offset_ms": 0.0},
+            "esp32_mag_csi": {"last_seq": 0, "duplicates": 0, "out_of_order": 0, "clock_offset_ms": 0.0},
+        }
         
     def calibrate_magnetometer(self, num_samples: int = 50):
         self.mag_processor.start_calibration(num_samples)
+
+    def _update_sequence_and_clock(self, dev_id: str, seq: int, uptime_ms: int, now_ts: float) -> dict:
+        if dev_id not in self.device_stats:
+            self.device_stats[dev_id] = {"last_seq": 0, "duplicates": 0, "out_of_order": 0, "clock_offset_ms": 0.0}
+        stats = self.device_stats[dev_id]
+        last_seq = stats["last_seq"]
+        if last_seq > 0:
+            if seq == last_seq:
+                stats["duplicates"] += 1
+            elif seq < last_seq:
+                stats["out_of_order"] += 1
+        stats["last_seq"] = seq
+        
+        if uptime_ms > 0:
+            # Clock offset between host system time and device uptime epoch
+            stats["clock_offset_ms"] = round((now_ts * 1000.0) - uptime_ms, 2)
+        return stats
 
     def handle_packet(self, payload: dict):
         now = time.time()
         dev_id = payload.get("device_id", "unknown")
         src_ip = payload.get("_source_ip")
+        uptime_ms = payload.get("uptime_ms", 0)
+        seq = payload.get("seq", 0)
+        
+        stats = self._update_sequence_and_clock(dev_id, seq, uptime_ms, now)
         
         if dev_id == "nodemcu_ap":
             self.last_update_ap = now
@@ -99,12 +129,15 @@ class LiveHardwareStateManager:
                 device_id="nodemcu_ap",
                 role="traffic_ap",
                 firmware_version=payload.get("fw_ver", "1.0.0"),
-                uptime_ms=payload.get("uptime_ms", 0),
-                seq=payload.get("seq", 0),
+                uptime_ms=uptime_ms,
+                seq=seq,
                 free_heap=payload.get("free_heap"),
                 wifi_connected=True,
                 ip_address=src_ip,
-                packet_rate_hz=payload.get("packet_rate_hz", 0.0)
+                packet_rate_hz=payload.get("packet_rate_hz", 0.0),
+                clock_offset_ms=stats.get("clock_offset_ms"),
+                duplicate_packets=stats.get("duplicates", 0),
+                out_of_order_packets=stats.get("out_of_order", 0)
             )
             
         elif dev_id == "esp32_radar_csi":
@@ -115,24 +148,40 @@ class LiveHardwareStateManager:
                 device_id="esp32_radar_csi",
                 role="radar_csi",
                 firmware_version=payload.get("fw_ver", "1.0.0"),
-                uptime_ms=payload.get("uptime_ms", 0),
-                seq=payload.get("seq", 0),
+                uptime_ms=uptime_ms,
+                seq=seq,
                 free_heap=payload.get("free_heap"),
                 wifi_connected=True,
                 ip_address=src_ip,
                 parser_errors=payload.get("errors", 0),
-                packet_rate_hz=payload.get("packet_rate_hz", 0.0)
+                packet_rate_hz=payload.get("packet_rate_hz", 0.0),
+                clock_offset_ms=stats.get("clock_offset_ms"),
+                duplicate_packets=stats.get("duplicates", 0),
+                out_of_order_packets=stats.get("out_of_order", 0)
             )
             
-            # Radar targets
-            if "radar" in payload:
-                self.current_state.radar = RadarTelemetry(**payload["radar"])
-            elif "targets" in payload:
+            # Radar targets tracking
+            raw_targets = []
+            if "radar" in payload and isinstance(payload["radar"], dict) and "targets" in payload["radar"]:
+                raw_targets = [RadarTarget(**t) for t in payload["radar"]["targets"] if t.get("is_valid", False)]
+            elif "targets" in payload and isinstance(payload["targets"], list):
+                raw_targets = [RadarTarget(**t) for t in payload["targets"] if t.get("is_valid", False)]
+
+            if raw_targets or self.radar_tracker.tracks:
+                tracked_targets = self.radar_tracker.update(raw_targets)
+                history_points = []
+                for track in self.radar_tracker.tracks.values():
+                    history_points.extend(track.history[-20:])
+                
                 self.current_state.radar = RadarTelemetry(
-                    target_count=len(payload["targets"]),
-                    targets=payload["targets"],
-                    sensor_status="ACTIVE"
+                    target_count=len(tracked_targets),
+                    targets=tracked_targets,
+                    sensor_status="ACTIVE" if tracked_targets else "IDLE",
+                    data_quality="HIGH" if tracked_targets else "NORMAL",
+                    track_history=history_points[-60:]
                 )
+            elif "radar" in payload and isinstance(payload["radar"], dict):
+                self.current_state.radar = RadarTelemetry(**payload["radar"])
 
             # Wi-Fi / CSI
             rssi = payload.get("rssi")
@@ -153,12 +202,15 @@ class LiveHardwareStateManager:
                 device_id="esp32_mag_csi",
                 role="magnetometer_csi",
                 firmware_version=payload.get("fw_ver", "1.0.0"),
-                uptime_ms=payload.get("uptime_ms", 0),
-                seq=payload.get("seq", 0),
+                uptime_ms=uptime_ms,
+                seq=seq,
                 free_heap=payload.get("free_heap"),
                 wifi_connected=True,
                 ip_address=src_ip,
-                packet_rate_hz=payload.get("packet_rate_hz", 0.0)
+                packet_rate_hz=payload.get("packet_rate_hz", 0.0),
+                clock_offset_ms=stats.get("clock_offset_ms"),
+                duplicate_packets=stats.get("duplicates", 0),
+                out_of_order_packets=stats.get("out_of_order", 0)
             )
             
             # Magnetometer
