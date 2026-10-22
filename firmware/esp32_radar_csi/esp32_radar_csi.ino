@@ -8,7 +8,7 @@
  * Responsibilities:
  * - Connects to NodeMCU AP "CSI_TEST"
  * - Collects Wi-Fi CSI with non-blocking FreeRTOS queue
- * - Parses HLK-LD2450 target coordinates, speed, and status
+ * - Parses HLK-LD2450 target coordinates, speed, and status with bounds-safe framing
  * - Streams structured telemetry to backend laptop over UDP (Port 5005)
  */
 
@@ -76,6 +76,9 @@ void setup() {
     Serial.println("  NEWVISION — ESP32 #1 RADAR & CSI SENSING NODE   ");
     Serial.println("==================================================");
 
+    // Initialize latestRadarFrame explicitly so uninitialized memory cannot appear as targets
+    latestRadarFrame.clear();
+
     // Initialize Radar UART2
     Serial2.begin(RADAR_BAUD, SERIAL_8N1, RADAR_RX_PIN, RADAR_TX_PIN);
     Serial.printf("[RADAR] UART2 initialized on RX:%d, TX:%d at %d baud\n", 
@@ -140,43 +143,85 @@ void loop() {
         lastTelemetrySent = now;
         seqNum++;
 
-        // Formulate target JSON array
-        String targetsJson = "[";
+        // Formulate target JSON array with bounded buffer and snprintf checks
+        char targetsJson[512];
+        int targetsLen = 0;
+        targetsJson[0] = '[';
+        targetsJson[1] = '\0';
+        targetsLen = 1;
+
         int validCount = 0;
         for (int i = 0; i < LD2450_MAX_TARGETS; i++) {
             if (latestRadarFrame.targets[i].is_valid) {
-                if (validCount > 0) targetsJson += ",";
                 LD2450TargetData& t = latestRadarFrame.targets[i];
                 float xm = t.x_mm / 1000.0f;
                 float ym = t.y_mm / 1000.0f;
                 float dist = sqrt(xm * xm + ym * ym);
                 float speed = t.speed_cms / 100.0f;
 
-                char tBuf[128];
-                snprintf(tBuf, sizeof(tBuf),
-                    "{\"target_id\":%d,\"x_mm\":%d,\"y_mm\":%d,\"x_m\":%.3f,\"y_m\":%.3f,"
+                char tBuf[160];
+                int n = snprintf(tBuf, sizeof(tBuf),
+                    "%s{\"target_id\":%d,\"x_mm\":%d,\"y_mm\":%d,\"x_m\":%.3f,\"y_m\":%.3f,"
                     "\"distance_m\":%.3f,\"speed_cms\":%d,\"speed_ms\":%.3f,\"resolution_mm\":%u,\"is_valid\":true}",
+                    (validCount > 0) ? "," : "",
                     i + 1, t.x_mm, t.y_mm, xm, ym, dist, t.speed_cms, speed, t.resolution_mm
                 );
-                targetsJson += tBuf;
-                validCount++;
+
+                if (n > 0 && n < (int)sizeof(tBuf) && (targetsLen + n + 2) < (int)sizeof(targetsJson)) {
+                    memcpy(targetsJson + targetsLen, tBuf, n);
+                    targetsLen += n;
+                    targetsJson[targetsLen] = '\0';
+                    validCount++;
+                }
             }
         }
-        targetsJson += "]";
+        targetsJson[targetsLen++] = ']';
+        targetsJson[targetsLen] = '\0';
 
-        // Build telemetry packet
-        char jsonPacket[512];
-        snprintf(jsonPacket, sizeof(jsonPacket),
+        // Retrieve diagnostic counters from radar driver
+        uint32_t totalBytes   = radarDriver.getTotalBytes();
+        uint32_t validFrames  = radarDriver.getValidFrames();
+        uint32_t invalidTails = radarDriver.getInvalidTails();
+        uint32_t headerResync = radarDriver.getHeaderResyncs();
+        uint32_t errorsTotal  = radarDriver.getErrors();
+
+        // Distinguish UART connection, valid frame reception, and target detection
+        // Do NOT report healthy/ACTIVE merely because Wi-Fi is transmitting
+        const char* sensorStatus = "DISCONNECTED";
+        if (validFrames > 0) {
+            sensorStatus = (validCount > 0) ? "ACTIVE" : "NO_TARGETS";
+        } else if (totalBytes > 0) {
+            sensorStatus = "SYNCING";
+        }
+
+        bool uartActive      = (totalBytes > 0);
+        bool framesHealthy   = (validFrames > 0);
+        bool targetsDetected = (validCount > 0);
+
+        // Build telemetry packet safely with 1024-byte capacity and strict truncation check
+        static char jsonPacket[1024];
+        int ret = snprintf(jsonPacket, sizeof(jsonPacket),
             "{\"device_id\":\"esp32_radar_csi\",\"fw_ver\":\"1.0.0\",\"uptime_ms\":%lu,\"seq\":%lu,"
             "\"free_heap\":%u,\"rssi\":%d,\"csi_count\":%lu,\"errors\":%lu,\"packet_rate_hz\":20.0,"
-            "\"radar\":{\"target_count\":%d,\"targets\":%s,\"parser_errors\":%lu,\"sensor_status\":\"%s\"}}",
-            now, seqNum, ESP.getFreeHeap(), lastRssi, csiPacketCount, radarDriver.getErrors(),
-            validCount, targetsJson.c_str(), radarDriver.getErrors(),
-            (validCount > 0) ? "ACTIVE" : "NO_TARGETS"
+            "\"radar\":{\"target_count\":%d,\"targets\":%s,\"parser_errors\":%lu,\"sensor_status\":\"%s\"},"
+            "\"radar_diagnostics\":{\"total_bytes\":%lu,\"valid_frames\":%lu,\"invalid_tails\":%lu,"
+            "\"header_resyncs\":%lu,\"uart_active\":%s,\"frames_healthy\":%s,\"targets_detected\":%s,\"radar_status\":\"%s\"}}",
+            now, seqNum, (unsigned)ESP.getFreeHeap(), lastRssi, csiPacketCount, errorsTotal,
+            validCount, targetsJson, errorsTotal, sensorStatus,
+            totalBytes, validFrames, invalidTails, headerResync,
+            uartActive ? "true" : "false",
+            framesHealthy ? "true" : "false",
+            targetsDetected ? "true" : "false",
+            sensorStatus
         );
 
-        udp.beginPacket(BACKEND_IP, BACKEND_UDP_PORT);
-        udp.write((const uint8_t*)jsonPacket, strlen(jsonPacket));
-        udp.endPacket();
+        // Strict verification: only transmit complete valid JSON
+        if (ret > 0 && ret < (int)sizeof(jsonPacket)) {
+            udp.beginPacket(BACKEND_IP, BACKEND_UDP_PORT);
+            udp.write((const uint8_t*)jsonPacket, ret);
+            udp.endPacket();
+        } else {
+            Serial.printf("[WARN] Telemetry packet truncated (ret=%d, cap=%u)\n", ret, (unsigned)sizeof(jsonPacket));
+        }
     }
 }
