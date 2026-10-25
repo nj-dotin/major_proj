@@ -39,22 +39,32 @@ class SensorFusionEngine:
                  radar_updated_at: float,
                  wifi_updated_at: float,
                  mag_updated_at: float,
-                 now_ts: Optional[float] = None) -> FusionState:
+                 now_ts: Optional[float] = None,
+                 wifi_radar_updated_at: Optional[float] = None,
+                 wifi_mag_updated_at: Optional[float] = None) -> FusionState:
         now = now_ts or time.time()
         
-        # Calculate freshness
+        # Calculate freshness per stream
         age_radar = round(now - radar_updated_at, 2) if radar_updated_at > 0 else 999.0
         age_wifi = round(now - wifi_updated_at, 2) if wifi_updated_at > 0 else 999.0
+        t_rx1 = wifi_radar_updated_at if wifi_radar_updated_at is not None else wifi_updated_at
+        t_rx2 = wifi_mag_updated_at if wifi_mag_updated_at is not None else wifi_updated_at
+        age_rx1 = round(now - t_rx1, 2) if t_rx1 > 0 else 999.0
+        age_rx2 = round(now - t_rx2, 2) if t_rx2 > 0 else 999.0
         age_mag = round(now - mag_updated_at, 2) if mag_updated_at > 0 else 999.0
         
         freshness = {
             "radar_sec": age_radar,
             "wifi_sec": age_wifi,
+            "rx1_sec": age_rx1,
+            "rx2_sec": age_rx2,
             "mag_sec": age_mag
         }
 
         radar_active = (radar is not None) and (age_radar < self.stale_threshold_sec)
-        wifi_active = (age_wifi < self.stale_threshold_sec)
+        rx1_active = (wifi_radar is not None) and (age_rx1 < self.stale_threshold_sec)
+        rx2_active = (wifi_mag is not None) and (age_rx2 < self.stale_threshold_sec)
+        wifi_active = rx1_active or rx2_active
         mag_active = (mag is not None) and (age_mag < self.stale_threshold_sec) and mag.is_supported
 
         supporting: List[str] = []
@@ -105,7 +115,7 @@ class SensorFusionEngine:
         wifi_activity_noted = False
 
         # Evaluate Rx1
-        if wifi_radar and (now - wifi_updated_at < self.stale_threshold_sec):
+        if rx1_active and wifi_radar:
             rx1_evidence.append(f"Rx1 RSSI: {wifi_radar.rssi_dbm} dBm ({wifi_radar.connection_status})")
             rx1_evidence.append(f"Rx1 CSI Format: {wifi_radar.feature_format}")
             rx1_evidence.append(f"Rx1 Packet Rate: {wifi_radar.csi_packet_rate:.0f} Hz (Loss: {wifi_radar.packet_loss_pct:.1f}%)")
@@ -118,7 +128,7 @@ class SensorFusionEngine:
             rx1_evidence.append("Rx1 offline or stale")
 
         # Evaluate Rx2
-        if wifi_mag and (now - wifi_updated_at < self.stale_threshold_sec):
+        if rx2_active and wifi_mag:
             rx2_evidence.append(f"Rx2 RSSI: {wifi_mag.rssi_dbm} dBm ({wifi_mag.connection_status})")
             rx2_evidence.append(f"Rx2 CSI Format: {wifi_mag.feature_format}")
             rx2_evidence.append(f"Rx2 Packet Rate: {wifi_mag.csi_packet_rate:.0f} Hz")

@@ -6,6 +6,7 @@
 
 #define LD2450_FRAME_LEN 30
 #define LD2450_MAX_TARGETS 3
+#define LD2450_PARTIAL_TIMEOUT_MS 50
 
 struct LD2450TargetData {
     int16_t x_mm = 0;
@@ -36,66 +37,65 @@ private:
     uint8_t rx_buffer[LD2450_FRAME_LEN];
     uint8_t rx_index = 0;
 
-    // Diagnostic counters
+    // Diagnostic counters and timing
     uint32_t total_bytes = 0;
     uint32_t valid_frames = 0;
     uint32_t invalid_tails = 0;
     uint32_t header_resyncs = 0;
+    uint32_t last_byte_time_ms = 0;
+    uint32_t last_frame_time_ms = 0;
 
+    /**
+     * Decode LD2450 sign-magnitude 16-bit integer.
+     * HLK-LD2450 hardware standard (verified with actual physical sensor captures):
+     * Bit 15 is sign bit (1 = positive, 0 = negative), bits 0-14 are magnitude.
+     */
     int16_t decodeSignMagnitude(uint16_t raw) {
         if (raw & 0x8000) {
-            return -(int16_t)(raw & 0x7FFF);
+            return (int16_t)(raw & 0x7FFF);
         }
-        return (int16_t)(raw & 0x7FFF);
+        return -(int16_t)(raw & 0x7FFF);
     }
 
     /**
      * Resynchronize the stream when header matching or tail verification fails.
-     * Searches forward in the buffer for the next 0xAA byte and slides the
-     * remaining bytes to the beginning of rx_buffer.
+     * Scans forward through rx_buffer for the earliest candidate 0xAA byte that
+     * matches the AA FF 03 00 prefix for all available bytes in the window.
+     * Does not shift or accept false candidates.
      */
     void resync() {
         header_resyncs++;
-        while (rx_index > 0) {
-            int next_aa = -1;
-            for (uint8_t i = 1; i < rx_index; i++) {
-                if (rx_buffer[i] == 0xAA) {
-                    next_aa = i;
-                    break;
+        for (uint8_t i = 1; i < rx_index; i++) {
+            if (rx_buffer[i] == 0xAA) {
+                uint8_t remaining = rx_index - i;
+                bool match = true;
+                if (remaining > 1 && rx_buffer[i + 1] != 0xFF) match = false;
+                if (remaining > 2 && rx_buffer[i + 2] != 0x03) match = false;
+                if (remaining > 3 && rx_buffer[i + 3] != 0x00) match = false;
+
+                if (match) {
+                    memmove(rx_buffer, &rx_buffer[i], remaining);
+                    rx_index = remaining;
+                    return;
                 }
             }
-
-            if (next_aa < 0) {
-                // No candidate 0xAA header byte found in remaining buffer
-                rx_index = 0;
-                return;
-            }
-
-            // Shift bytes starting at next_aa to beginning of buffer
-            uint8_t remaining = rx_index - next_aa;
-            memmove(rx_buffer, &rx_buffer[next_aa], remaining);
-            rx_index = remaining;
-
-            // Validate header prefix matched so far (AA FF 03 00)
-            bool prefix_valid = true;
-            if (rx_index > 1 && rx_buffer[1] != 0xFF) prefix_valid = false;
-            if (rx_index > 2 && rx_buffer[2] != 0x03) prefix_valid = false;
-            if (rx_index > 3 && rx_buffer[3] != 0x00) prefix_valid = false;
-
-            if (prefix_valid) {
-                return; // Recovered a valid or promising header sequence
-            }
         }
+        rx_index = 0;
     }
 
 public:
-    LD2450Driver() : rx_index(0), total_bytes(0), valid_frames(0), invalid_tails(0), header_resyncs(0) {
+    LD2450Driver() : rx_index(0), total_bytes(0), valid_frames(0), invalid_tails(0), header_resyncs(0), last_byte_time_ms(0), last_frame_time_ms(0) {
+        memset(rx_buffer, 0, sizeof(rx_buffer));
+    }
+
+    void resetRxBuffer() {
+        rx_index = 0;
         memset(rx_buffer, 0, sizeof(rx_buffer));
     }
 
     /**
-     * Ingests a single UART byte with strict buffer boundary enforcement,
-     * header resynchronization, and tail validation.
+     * Ingests a single UART byte with stale frame timeout,
+     * header validation, resynchronization, and tail validation.
      * 
      * @param b Incoming UART byte.
      * @param out_frame Pointer to frame structure to populate upon valid frame completion.
@@ -103,16 +103,24 @@ public:
      */
     bool readByte(uint8_t b, LD2450Frame* out_frame) {
         total_bytes++;
+        uint32_t now = millis();
 
-        // Defense-in-depth bounds check: rx_index must strictly be < LD2450_FRAME_LEN
+        // Check for partial frame timeout: if bytes stalled > 50ms, discard stale fragment
+        if (rx_index > 0 && (now - last_byte_time_ms > LD2450_PARTIAL_TIMEOUT_MS)) {
+            rx_index = 0;
+            header_resyncs++;
+        }
+        last_byte_time_ms = now;
+
+        // Bounds safety check
         if (rx_index >= LD2450_FRAME_LEN) {
             rx_index = 0;
         }
 
-        // Store byte safely within buffer boundaries
+        // Store byte safely
         rx_buffer[rx_index++] = b;
 
-        // Header verification as bytes arrive: AA FF 03 00
+        // Incremental header validation: AA FF 03 00
         if (rx_index == 1) {
             if (rx_buffer[0] != 0xAA) {
                 rx_index = 0;
@@ -135,11 +143,12 @@ public:
             }
         }
 
-        // Check tail and decode frame when full 30 bytes are gathered
+        // Complete 30-byte frame gathered: check tail and decode
         if (rx_index == LD2450_FRAME_LEN) {
             // Verify tail: 0x55 0xCC
             if (rx_buffer[28] == 0x55 && rx_buffer[29] == 0xCC) {
                 valid_frames++;
+                last_frame_time_ms = now;
                 if (out_frame != nullptr) {
                     out_frame->target_count = 0;
                     for (int i = 0; i < LD2450_MAX_TARGETS; i++) {
@@ -180,12 +189,15 @@ public:
         return false;
     }
 
-    // Diagnostic Counter Getters
+    // Diagnostic Counter and Timing Getters
     uint32_t getTotalBytes() const { return total_bytes; }
     uint32_t getValidFrames() const { return valid_frames; }
     uint32_t getInvalidTails() const { return invalid_tails; }
     uint32_t getHeaderResyncs() const { return header_resyncs; }
     uint32_t getErrors() const { return invalid_tails + header_resyncs; }
+    uint32_t getLastByteTime() const { return last_byte_time_ms; }
+    uint32_t getLastFrameTime() const { return last_frame_time_ms; }
+    uint8_t  getBufferIndex() const { return rx_index; }
 };
 
 #endif // LD2450_DRIVER_H

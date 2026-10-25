@@ -171,8 +171,12 @@ document.addEventListener('DOMContentLoaded', () => {
       nodeMagCalib.className = cal === 'CALIBRATED' ? 'color-emerald' : 'color-amber';
     }
 
-    // Session Buffer Status
-    fetchSessionStatus();
+    // Session Buffer Status (throttled to 0.5 Hz to prevent flooding)
+    const nowTs = Date.now();
+    if (!window._lastSessionFetch || nowTs - window._lastSessionFetch > 2000) {
+      window._lastSessionFetch = nowTs;
+      fetchSessionStatus();
+    }
 
     // B. Radar Monitoring
     const radar = state.radar || {};

@@ -64,6 +64,11 @@ class RadarTarget(BaseModel):
     speed_ms: float = Field(..., description="Speed in m/s")
     resolution_mm: int = Field(default=0, description="Distance resolution/gate")
     is_valid: bool = True
+    raw_x_m: Optional[float] = Field(default=None, description="Unfiltered raw lateral position in meters")
+    raw_y_m: Optional[float] = Field(default=None, description="Unfiltered raw distance in meters")
+    raw_speed_ms: Optional[float] = Field(default=None, description="Unfiltered raw speed in m/s")
+    is_coasting: bool = Field(default=False, description="True if target position is being coasted over a dropout")
+    track_age_s: float = Field(default=0.0, description="Age of this track in seconds")
 
 class RadarTelemetry(BaseModel):
     target_count: int = Field(default=0, description="Number of detected targets (0-3)")

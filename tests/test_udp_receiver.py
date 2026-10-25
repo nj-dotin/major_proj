@@ -96,3 +96,50 @@ def test_radar_packet_tracker_integration():
     assert round(target.x_m, 1) == 0.5
     assert round(target.y_m, 1) == 2.0
     assert len(manager.current_state.radar.track_history) >= 1
+
+def test_csi_subcarrier_variance_and_rx_routing():
+    manager = LiveHardwareStateManager()
+
+    # Packet from ESP32 #1 (Radar + CSI)
+    packet_rx1 = {
+        "device_id": "esp32_radar_csi",
+        "fw_ver": "1.0.0",
+        "uptime_ms": 6000,
+        "seq": 10,
+        "rssi": -45,
+        "csi_count": 120,
+        "subcarriers": [12, 14, 15, 18, 22, 19, 14, 13, 16, 20, 25, 18, 14, 12, 15, 16],
+        "_source_ip": "192.168.4.10",
+        "radar": {"target_count": 0, "targets": []}
+    }
+    manager.handle_packet(packet_rx1)
+
+    rx1_wifi = manager.current_state.wifi_radar_node
+    assert rx1_wifi is not None
+    assert rx1_wifi.receiver_id == "rx1"
+    assert rx1_wifi.csi_available is True
+    assert "SUBCA_AMP_VAR" in rx1_wifi.feature_format
+    assert rx1_wifi.csi_amplitude_variance is not None
+    assert rx1_wifi.csi_amplitude_variance > 0
+
+    # Packet from ESP32 #2 (Mag + CSI)
+    packet_rx2 = {
+        "device_id": "esp32_mag_csi",
+        "fw_ver": "1.0.0",
+        "uptime_ms": 6100,
+        "seq": 11,
+        "rssi": -52,
+        "csi_count": 95,
+        "subcarriers": [10, 10, 11, 10, 12, 10, 11, 10, 10, 11, 10, 10, 11, 10, 11, 10],
+        "bx": 12.3, "by": -5.6, "bz": 42.1, "chip": "HMC5883L", "unit": "uT",
+        "_source_ip": "192.168.4.20"
+    }
+    manager.handle_packet(packet_rx2)
+
+    rx2_wifi = manager.current_state.wifi_mag_node
+    assert rx2_wifi is not None
+    assert rx2_wifi.receiver_id == "rx2"
+    assert rx2_wifi.csi_available is True
+    assert rx2_wifi.rssi_dbm == -52
+    assert rx2_wifi.csi_amplitude_variance is not None
+    assert rx2_wifi.motion_heuristic == "QUIET"

@@ -8,6 +8,7 @@ Total Frame Length: 30 bytes
 """
 
 import math
+import time
 from typing import List, Tuple, Optional, Dict
 from backend.schemas import RadarTarget, RadarTelemetry
 
@@ -18,12 +19,13 @@ FRAME_LENGTH = 30
 def decode_ld2450_int16(raw_val: int) -> int:
     """
     Decodes LD2450 sign-magnitude 16-bit integer.
-    Per HLK-LD2450 manual:
-    Bit 15 is sign bit (1 = negative, 0 = positive), bits 0-14 are magnitude.
+    Per HLK-LD2450 hardware specification:
+    Bit 15 is sign bit (1 = positive, 0 = negative), bits 0-14 are magnitude.
     """
+    magnitude = raw_val & 0x7FFF
     if raw_val & 0x8000:
-        return -(raw_val & 0x7FFF)
-    return raw_val & 0x7FFF
+        return magnitude
+    return -magnitude
 
 def parse_ld2450_target(target_id: int, raw_bytes: bytes) -> Optional[RadarTarget]:
     """
@@ -72,16 +74,21 @@ def parse_ld2450_target(target_id: int, raw_bytes: bytes) -> Optional[RadarTarge
 class TrackedObject:
     """
     Internal state for a tracked radar target with an Alpha-Beta filter.
-    State: [x, y, vx, vy] in meters and m/s.
+    State: [x, y, vx, vy] in meters and m/s, along with raw coordinate references.
     """
-    def __init__(self, track_id: int, x: float, y: float, vx: float = 0.0, vy: float = 0.0):
+    def __init__(self, track_id: int, x: float, y: float, vx: float = 0.0, vy: float = 0.0, first_seen: float = 0.0):
         self.track_id = track_id
         self.x = x
         self.y = y
         self.vx = vx
         self.vy = vy
+        self.raw_x = x
+        self.raw_y = y
+        self.raw_speed = vy
         self.hits = 1
         self.misses = 0
+        self.first_seen = first_seen or time.time()
+        self.last_seen = self.first_seen
         self.state = "CONFIRMED" if self.hits >= 2 else "TENTATIVE"
         self.history: List[dict] = []
         self.append_history()
@@ -91,7 +98,12 @@ class TrackedObject:
         self.y += self.vy * dt
         self.misses += 1
 
-    def update(self, meas_x: float, meas_y: float, speed_ms: float, dt: float = 0.05, alpha: float = 0.7, beta: float = 0.4):
+    def update(self, meas_x: float, meas_y: float, speed_ms: float, dt: float = 0.05, alpha: float = 0.7, beta: float = 0.4, timestamp: float = 0.0):
+        self.raw_x = meas_x
+        self.raw_y = meas_y
+        self.raw_speed = speed_ms
+        self.last_seen = timestamp or time.time()
+
         residual_x = meas_x - self.x
         residual_y = meas_y - self.y
 
@@ -121,41 +133,64 @@ class LD2450Tracker:
     """
     Track continuity filter for LD2450 radar.
     Maintains persistent target IDs, smooths noisy coordinate jitter with an alpha-beta filter,
-    and coasts tracks over brief signal dropouts (up to max_misses frames).
+    rejects outlier jumps with maximum velocity gating, and coasts tracks over dropouts.
     """
-    def __init__(self, max_misses: int = 5, max_distance_gate: float = 1.2, dt: float = 0.05):
+    def __init__(self, max_misses: int = 5, max_distance_gate: float = 1.2, max_velocity_mps: float = 6.0, dt: float = 0.05):
         self.tracks: Dict[int, TrackedObject] = {}
         self.next_track_id = 1
         self.max_misses = max_misses
         self.max_distance_gate = max_distance_gate
+        self.max_velocity_mps = max_velocity_mps
         self.dt = dt
+        self.last_update_ts = 0.0
 
-    def update(self, raw_targets: List[RadarTarget]) -> List[RadarTarget]:
+    def update(self, raw_targets: List[RadarTarget], timestamp: float = 0.0) -> List[RadarTarget]:
+        now = timestamp if timestamp > 0 else time.time()
+        effective_dt = self.dt
+        if self.last_update_ts > 0 and now > self.last_update_ts:
+            delta = now - self.last_update_ts
+            if 0.005 <= delta <= 0.5:
+                effective_dt = delta
+        self.last_update_ts = now
+
         # 1. Prediction step for existing tracks
         for track in self.tracks.values():
-            track.predict(self.dt)
+            track.predict(effective_dt)
 
         unmatched_detections = list(raw_targets)
         matched_track_ids = set()
 
-        # 2. Association step (Greedy Nearest Neighbor)
+        # 2. Association step (Greedy Nearest Neighbor with Outlier Velocity Gating)
         for track_id, track in list(self.tracks.items()):
             best_det_idx = -1
             best_dist = float('inf')
 
             for idx, det in enumerate(unmatched_detections):
                 d = math.hypot(track.x - det.x_m, track.y - det.y_m)
-                if d < best_dist and d <= self.max_distance_gate:
-                    best_dist = d
-                    best_det_idx = idx
+                apparent_v = d / effective_dt if effective_dt > 0 else 0.0
+
+                # Must satisfy distance gate and not exceed physical human velocity limit
+                if d <= self.max_distance_gate and (apparent_v <= self.max_velocity_mps or d <= 0.4):
+                    if d < best_dist:
+                        best_dist = d
+                        best_det_idx = idx
 
             if best_det_idx != -1:
                 det = unmatched_detections.pop(best_det_idx)
-                track.update(det.x_m, det.y_m, det.speed_ms, self.dt)
+                track.update(det.x_m, det.y_m, det.speed_ms, dt=effective_dt, timestamp=now)
                 matched_track_ids.add(track_id)
 
-        # 3. Initiation step for unmatched detections
+        # 3. Initiation step for unmatched detections (cap to 3 max hardware target slots)
         for det in unmatched_detections:
+            if len(self.tracks) >= 3:
+                # Remove oldest coasting track if at capacity
+                coasting = [t for t in self.tracks.values() if t.misses > 0]
+                if coasting:
+                    oldest_coasting = max(coasting, key=lambda t: t.misses)
+                    del self.tracks[oldest_coasting.track_id]
+                else:
+                    break
+
             new_id = self.next_track_id
             self.next_track_id += 1
             if self.next_track_id > 999:
@@ -165,11 +200,12 @@ class LD2450Tracker:
                 x=det.x_m,
                 y=det.y_m,
                 vx=0.0,
-                vy=det.speed_ms
+                vy=det.speed_ms,
+                first_seen=now
             )
 
         # 4. Pruning step for lost tracks
-        dead_tracks = [tid for tid, t in self.tracks.items() if t.misses > self.max_misses or t.y < 0 or t.y > 8.0]
+        dead_tracks = [tid for tid, t in self.tracks.items() if t.misses > self.max_misses or t.y < -0.5 or t.y > 8.0]
         for tid in dead_tracks:
             del self.tracks[tid]
 
@@ -179,6 +215,7 @@ class LD2450Tracker:
             if track.misses <= self.max_misses:
                 dist_m = round(math.hypot(track.x, track.y), 3)
                 v_total = round(math.hypot(track.vx, track.vy), 3)
+                track_age = round(now - track.first_seen, 2)
                 output_targets.append(RadarTarget(
                     target_id=track.track_id,
                     x_mm=int(track.x * 1000),
@@ -189,7 +226,12 @@ class LD2450Tracker:
                     speed_cms=int(track.vy * 100),
                     speed_ms=round(track.vy, 3),
                     resolution_mm=100,
-                    is_valid=True
+                    is_valid=True,
+                    raw_x_m=round(track.raw_x, 3),
+                    raw_y_m=round(track.raw_y, 3),
+                    raw_speed_ms=round(track.raw_speed, 3),
+                    is_coasting=(track.misses > 0),
+                    track_age_s=track_age
                 ))
 
         return output_targets

@@ -77,8 +77,8 @@ class LiveHardwareStateManager:
     """
     def __init__(self):
         self.mag_processor = MagnetometerProcessor()
-        self.csi_processor_radar = CSIProcessor()
-        self.csi_processor_mag = CSIProcessor()
+        self.csi_processor_radar = CSIProcessor(receiver_id="rx1")
+        self.csi_processor_mag = CSIProcessor(receiver_id="rx2")
         self.radar_tracker = LD2450Tracker()
         
         self.current_state = SystemConsolidatedState(is_demo_mode=False)
@@ -86,6 +86,8 @@ class LiveHardwareStateManager:
         self.last_update_mag = 0.0
         self.last_update_ap = 0.0
         self.last_update_wifi = 0.0
+        self.last_update_wifi_radar = 0.0
+        self.last_update_wifi_mag = 0.0
 
         # Sequence and timing tracking per device
         self.device_stats = {
@@ -142,6 +144,7 @@ class LiveHardwareStateManager:
             
         elif dev_id == "esp32_radar_csi":
             self.last_update_radar = now
+            self.last_update_wifi_radar = now
             self.last_update_wifi = now
             
             self.current_state.node_radar = DeviceDiagnostics(
@@ -160,15 +163,43 @@ class LiveHardwareStateManager:
                 out_of_order_packets=stats.get("out_of_order", 0)
             )
             
-            # Radar targets tracking
+            # Radar targets tracking with outlier jump rejection & coasting
             raw_targets = []
+            target_list = []
             if "radar" in payload and isinstance(payload["radar"], dict) and "targets" in payload["radar"]:
-                raw_targets = [RadarTarget(**t) for t in payload["radar"]["targets"] if t.get("is_valid", False)]
+                target_list = payload["radar"]["targets"]
             elif "targets" in payload and isinstance(payload["targets"], list):
-                raw_targets = [RadarTarget(**t) for t in payload["targets"] if t.get("is_valid", False)]
+                target_list = payload["targets"]
+
+            if isinstance(target_list, list):
+                for t in target_list:
+                    if not isinstance(t, dict):
+                        continue
+                    is_val = t.get("is_valid", False)
+                    if isinstance(is_val, str):
+                        is_val = is_val.lower() in ("true", "1")
+                    has_coords = (t.get("x_mm", 0) != 0 or t.get("y_mm", 0) != 0 or
+                                  t.get("x_m", 0) != 0 or t.get("y_m", 0) != 0 or
+                                  t.get("distance_m", 0) > 0)
+                    if is_val or has_coords:
+                        # Defensive normalization: LD2450 targets in front of sensor must have positive depth (y)
+                        # This seamlessly handles both current ESP32 firmware and re-flashed firmware
+                        y_m = t.get("y_m", 0.0)
+                        y_mm = t.get("y_mm", 0)
+                        if y_m < 0:
+                            t["y_m"] = abs(y_m)
+                        if y_mm < 0:
+                            t["y_mm"] = abs(y_mm)
+                        if not t.get("distance_m"):
+                            t["distance_m"] = round(math.hypot(t.get("x_m", 0), t.get("y_m", 0)), 3)
+                        t["is_valid"] = True
+                        try:
+                            raw_targets.append(RadarTarget(**t))
+                        except Exception as e:
+                            logger.warning(f"Error parsing RadarTarget dict: {e}")
 
             if raw_targets or self.radar_tracker.tracks:
-                tracked_targets = self.radar_tracker.update(raw_targets)
+                tracked_targets = self.radar_tracker.update(raw_targets, timestamp=now)
                 history_points = []
                 for track in self.radar_tracker.tracks.values():
                     history_points.extend(track.history[-20:])
@@ -191,11 +222,13 @@ class LiveHardwareStateManager:
                 rssi_dbm=rssi,
                 csi_packet_count=csi_count,
                 subcarrier_amplitudes=subcarriers,
-                now_ts=now
+                now_ts=now,
+                receiver_id="rx1"
             )
             
         elif dev_id == "esp32_mag_csi":
             self.last_update_mag = now
+            self.last_update_wifi_mag = now
             self.last_update_wifi = now
             
             self.current_state.node_mag = DeviceDiagnostics(
@@ -227,10 +260,13 @@ class LiveHardwareStateManager:
             # Wi-Fi / CSI
             rssi = payload.get("rssi")
             csi_count = payload.get("csi_count", 0)
+            subcarriers = payload.get("subcarriers")
             self.current_state.wifi_mag_node = self.csi_processor_mag.process(
                 rssi_dbm=rssi,
                 csi_packet_count=csi_count,
-                now_ts=now
+                subcarrier_amplitudes=subcarriers,
+                now_ts=now,
+                receiver_id="rx2"
             )
 
         # Update active devices list
@@ -271,7 +307,9 @@ class LiveHardwareStateManager:
             radar_updated_at=self.last_update_radar,
             wifi_updated_at=self.last_update_wifi,
             mag_updated_at=self.last_update_mag,
-            now_ts=now
+            now_ts=now,
+            wifi_radar_updated_at=self.last_update_wifi_radar,
+            wifi_mag_updated_at=self.last_update_wifi_mag
         )
         
         self.current_state.timestamp = now

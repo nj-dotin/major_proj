@@ -99,7 +99,12 @@ class DemoSimulator:
             speed_cms=speed_cms,
             speed_ms=speed_ms,
             resolution_mm=150,
-            is_valid=True
+            is_valid=True,
+            raw_x_m=x_m,
+            raw_y_m=y_m,
+            raw_speed_ms=speed_ms,
+            is_coasting=False,
+            track_age_s=round(t, 2)
         )
 
         # Track history update (limit to last 60 points)

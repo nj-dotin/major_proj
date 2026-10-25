@@ -32,7 +32,7 @@ logger = logging.getLogger("newvision.api")
 
 # System operational mode
 SYSTEM_STATE = {
-    "is_demo_mode": True,  # Default to demo mode for immediate testing without hardware
+    "is_demo_mode": False,  # Live hardware mode is active by default
     "active_websockets": set()
 }
 

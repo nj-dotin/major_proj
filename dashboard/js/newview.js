@@ -39,6 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Layer Toggles
   const layers = {
     targets: true,
+    rawDetections: false,
     trails: true,
     velocity: true,
     anchors: true,
@@ -115,6 +116,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Layer checkboxes
   document.getElementById('layerTargets').addEventListener('change', e => layers.targets = e.target.checked);
+  const layerRawEl = document.getElementById('layerRawDetections');
+  if (layerRawEl) layerRawEl.addEventListener('change', e => layers.rawDetections = e.target.checked);
   document.getElementById('layerTrails').addEventListener('change', e => layers.trails = e.target.checked);
   document.getElementById('layerVelocity').addEventListener('change', e => layers.velocity = e.target.checked);
   document.getElementById('layerAnchors').addEventListener('change', e => layers.anchors = e.target.checked);
@@ -203,21 +206,47 @@ document.addEventListener('DOMContentLoaded', () => {
     const sideRx2Status = document.getElementById('sideRx2Status');
     if (sideRx2Status) sideRx2Status.textContent = `${rx2.feature_format || 'RAW RSSI'} (${rx2.rssi_dbm || -49} dBm)`;
 
+    // CSI / RSSI Activity Bar Updates
+    const var1 = rx1.csi_amplitude_variance ?? rx1.derived_variance ?? 0.0;
+    const sideRx1VarVal = document.getElementById('sideRx1VarVal');
+    const sideRx1Bar = document.getElementById('sideRx1Bar');
+    if (sideRx1VarVal) sideRx1VarVal.textContent = `${var1.toFixed(2)} (${rx1.motion_heuristic || 'QUIET'})`;
+    if (sideRx1Bar) {
+      const pct1 = Math.min(100, Math.max(5, (var1 / 6.0) * 100));
+      sideRx1Bar.style.width = `${pct1}%`;
+      sideRx1Bar.style.background = var1 > 4.0 ? '#ef4444' : (var1 > 1.2 ? '#f59e0b' : '#00e5ff');
+    }
+
+    const var2 = rx2.csi_amplitude_variance ?? rx2.derived_variance ?? 0.0;
+    const sideRx2VarVal = document.getElementById('sideRx2VarVal');
+    const sideRx2Bar = document.getElementById('sideRx2Bar');
+    if (sideRx2VarVal) sideRx2VarVal.textContent = `${var2.toFixed(2)} (${rx2.motion_heuristic || 'QUIET'})`;
+    if (sideRx2Bar) {
+      const pct2 = Math.min(100, Math.max(5, (var2 / 6.0) * 100));
+      sideRx2Bar.style.width = `${pct2}%`;
+      sideRx2Bar.style.background = var2 > 4.0 ? '#ef4444' : (var2 > 1.2 ? '#f59e0b' : '#a855f7');
+    }
+
     // Target Selection List
     const targetSelectList = document.getElementById('targetSelectList');
     if (targetSelectList) {
       if (targets.length === 0) {
         targetSelectList.innerHTML = '<div style="color:var(--text-muted);font-size:11px;padding:6px 0;">No radar targets in field of view</div>';
       } else {
-        targetSelectList.innerHTML = targets.map(t => `
+        targetSelectList.innerHTML = targets.map(t => {
+          const isCoasting = !!t.is_coasting;
+          const badgeHtml = isCoasting
+            ? '<span class="badge badge-amber" style="background:rgba(245,158,11,0.2);color:#f59e0b;border:1px dashed #f59e0b;">COASTING</span>'
+            : '<span class="badge badge-emerald">TRACKED</span>';
+          return `
           <div class="target-card-select ${t.target_id === selectedTargetId ? 'selected' : ''}" data-target-id="${t.target_id}">
             <div>
-              <b style="color: #00e5ff;">Target #${t.target_id}</b>
+              <b style="color: ${isCoasting ? '#f59e0b' : '#00e5ff'};">Target #${t.target_id}</b>
               <div style="font-size: 10px; color: var(--text-muted);">Range: ${t.distance_m.toFixed(2)} m | Speed: ${t.speed_ms.toFixed(2)} m/s</div>
             </div>
-            <span class="badge badge-emerald">TRACKED</span>
+            ${badgeHtml}
           </div>
-        `).join('');
+        `}).join('');
 
         // Rebind clicks
         targetSelectList.querySelectorAll('.target-card-select').forEach(card => {
@@ -232,8 +261,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Selected target details
     const selected = targets.find(t => t.target_id === selectedTargetId) || targets[0];
     if (selected) {
-      document.getElementById('detailTargetId').textContent = `#${selected.target_id}`;
-      document.getElementById('detailCoords').textContent = `X: ${selected.x_m.toFixed(2)}m, Y: ${selected.y_m.toFixed(2)}m`;
+      document.getElementById('detailTargetId').textContent = `#${selected.target_id}${selected.is_coasting ? ' (Coasting)' : ''}`;
+      let coordStr = `X: ${selected.x_m.toFixed(2)}m, Y: ${selected.y_m.toFixed(2)}m`;
+      if (selected.raw_x_m != null && selected.raw_y_m != null) {
+        coordStr += ` [Raw: ${selected.raw_x_m.toFixed(2)}, ${selected.raw_y_m.toFixed(2)}]`;
+      }
+      document.getElementById('detailCoords').textContent = coordStr;
       document.getElementById('detailDistance').textContent = `${selected.distance_m.toFixed(2)} meters`;
       document.getElementById('detailSpeed').textContent = `${selected.speed_ms > 0 ? '+' : ''}${selected.speed_ms.toFixed(2)} m/s (${selected.speed_cms} cm/s)`;
       const trail = trackHistory.get(selected.target_id) || [];
@@ -396,28 +429,57 @@ document.addEventListener('DOMContentLoaded', () => {
       targets.forEach(t => {
         const p = worldToScreen(t.x_m, t.y_m);
         const isSelected = t.target_id === selectedTargetId;
+        const isCoasting = !!t.is_coasting;
 
-        // Outer pulsing ring
+        // Render Raw vs Filtered link & marker
+        if (layers.rawDetections && t.raw_x_m != null && t.raw_y_m != null) {
+          const rawP = worldToScreen(t.raw_x_m, t.raw_y_m);
+          ctx.beginPath();
+          ctx.moveTo(rawP.sx, rawP.sy);
+          ctx.lineTo(p.sx, p.sy);
+          ctx.strokeStyle = 'rgba(236, 72, 153, 0.5)';
+          ctx.setLineDash([2, 2]);
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Raw detection diamond
+          ctx.save();
+          ctx.translate(rawP.sx, rawP.sy);
+          ctx.rotate(Math.PI / 4);
+          ctx.fillStyle = 'rgba(236, 72, 153, 0.8)';
+          ctx.fillRect(-3, -3, 6, 6);
+          ctx.restore();
+        }
+
+        // Outer pulsing/coasting ring
         ctx.beginPath();
         ctx.arc(p.sx, p.sy, isSelected ? 14 : 10, 0, Math.PI * 2);
-        ctx.strokeStyle = isSelected ? '#00e5ff' : 'rgba(0, 229, 255, 0.7)';
+        if (isCoasting) {
+          ctx.strokeStyle = '#f59e0b';
+          ctx.setLineDash([3, 3]);
+        } else {
+          ctx.strokeStyle = isSelected ? '#00e5ff' : 'rgba(0, 229, 255, 0.7)';
+        }
         ctx.lineWidth = isSelected ? 2 : 1.5;
         ctx.stroke();
+        ctx.setLineDash([]);
 
         // Center dot
         ctx.beginPath();
         ctx.arc(p.sx, p.sy, 5, 0, Math.PI * 2);
-        ctx.fillStyle = '#00e5ff';
-        ctx.shadowColor = '#00e5ff';
+        ctx.fillStyle = isCoasting ? '#f59e0b' : '#00e5ff';
+        ctx.shadowColor = isCoasting ? '#f59e0b' : '#00e5ff';
         ctx.shadowBlur = 10;
         ctx.fill();
         ctx.shadowBlur = 0;
 
         // Target Label
         ctx.font = '11px "JetBrains Mono", monospace';
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = isCoasting ? '#f59e0b' : '#ffffff';
         ctx.textAlign = 'left';
-        ctx.fillText(`T${t.target_id} (${t.distance_m.toFixed(2)}m)`, p.sx + 14, p.sy - 4);
+        const coastTag = isCoasting ? ' [COAST]' : '';
+        ctx.fillText(`T${t.target_id}${coastTag} (${t.distance_m.toFixed(2)}m)`, p.sx + 14, p.sy - 4);
 
         // Velocity Heading Vector
         if (layers.velocity && Math.abs(t.speed_ms) > 0.05) {
@@ -432,14 +494,14 @@ document.addEventListener('DOMContentLoaded', () => {
           ctx.beginPath();
           ctx.moveTo(p.sx, p.sy);
           ctx.lineTo(tipX, tipY);
-          ctx.strokeStyle = '#10b981';
+          ctx.strokeStyle = isCoasting ? '#f59e0b' : '#10b981';
           ctx.lineWidth = 2;
           ctx.stroke();
 
           // Arrow head
           ctx.beginPath();
           ctx.arc(tipX, tipY, 3, 0, Math.PI * 2);
-          ctx.fillStyle = '#10b981';
+          ctx.fillStyle = isCoasting ? '#f59e0b' : '#10b981';
           ctx.fill();
         }
       });
@@ -686,11 +748,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const topPt = project3D(t.x_m, t.y_m, targetZ);
         const isSelected = t.target_id === selectedTargetId;
 
+        const isCoasting = !!t.is_coasting;
+        const colorPrimary = isCoasting ? '#f59e0b' : '#00e5ff';
+
+        // Raw detection marker in 3D
+        if (layers.rawDetections && t.raw_x_m != null && t.raw_y_m != null) {
+          const rawGround = project3D(t.raw_x_m, t.raw_y_m, 0);
+          ctx.beginPath();
+          ctx.arc(rawGround.sx, rawGround.sy, 3, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(236, 72, 153, 0.8)';
+          ctx.fill();
+        }
+
         // Ground drop-line & shadow
         ctx.beginPath();
         ctx.moveTo(groundPt.sx, groundPt.sy);
         ctx.lineTo(topPt.sx, topPt.sy);
-        ctx.strokeStyle = 'rgba(0, 229, 255, 0.4)';
+        ctx.strokeStyle = isCoasting ? 'rgba(245, 158, 11, 0.4)' : 'rgba(0, 229, 255, 0.4)';
         ctx.lineWidth = 1;
         ctx.setLineDash([3, 3]);
         ctx.stroke();
@@ -699,14 +773,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // Ground shadow ring
         ctx.beginPath();
         ctx.ellipse(groundPt.sx, groundPt.sy, 8, 4, 0, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(0, 229, 255, 0.15)';
+        ctx.fillStyle = isCoasting ? 'rgba(245, 158, 11, 0.15)' : 'rgba(0, 229, 255, 0.15)';
         ctx.fill();
 
         // 3D Target Capsule Sphere
         ctx.beginPath();
         ctx.arc(topPt.sx, topPt.sy, isSelected ? 9 : 7, 0, Math.PI * 2);
-        ctx.fillStyle = '#00e5ff';
-        ctx.shadowColor = '#00e5ff';
+        ctx.fillStyle = colorPrimary;
+        ctx.shadowColor = colorPrimary;
         ctx.shadowBlur = 12;
         ctx.fill();
         ctx.shadowBlur = 0;
@@ -717,9 +791,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 3D Target Text Label
         ctx.font = '11px "JetBrains Mono", monospace';
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = isCoasting ? '#f59e0b' : '#ffffff';
         ctx.textAlign = 'left';
-        ctx.fillText(`T${t.target_id} (${t.distance_m.toFixed(2)}m)`, topPt.sx + 12, topPt.sy - 4);
+        const coastTag = isCoasting ? ' [COAST]' : '';
+        ctx.fillText(`T${t.target_id}${coastTag} (${t.distance_m.toFixed(2)}m)`, topPt.sx + 12, topPt.sy - 4);
       });
     }
 
