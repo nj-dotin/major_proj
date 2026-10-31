@@ -462,15 +462,62 @@
     <section class="section-block" aria-labelledby="heading-diagnostics">
       <div class="section-header">
         <h2 id="heading-diagnostics" class="section-title">
-          <span class="section-icon">🧲</span>
-          <span>E. Magnetometer, MTC-1 & Diagnostics</span>
+          <span class="section-icon">🧭</span>
+          <span>E. 6-Axis IMU, Magnetometer & MTC-1</span>
         </h2>
         <div class="section-meta">
-          <span class="badge badge-amber">EXPERIMENTAL CLASSIFIER</span>
+          <span class="badge badge-emerald">ESP32 #2 SENSORS</span>
         </div>
       </div>
 
-      <div class="grid-split-half">
+      <div class="grid-split-half" style="margin-bottom: 16px;">
+        <!-- 6-Axis IMU (MPU-6500) Motion Tracking Card -->
+        <div class="card-panel">
+          <div class="card-inner-header">
+            <div class="title-with-pill">
+              <span class="card-kicker">6-AXIS INERTIAL MEASUREMENT UNIT (IMU)</span>
+              <span id="imuSensorChipBadge" class="badge badge-emerald">MPU6500</span>
+            </div>
+            <div class="mag-stat-group">
+              <span id="imuStatusBadge" class="badge badge-emerald">ONLINE</span>
+              <span class="separator">|</span>
+              <span>Updated: <b id="imuFreshness">--</b></span>
+            </div>
+          </div>
+
+          <div class="imu-grid">
+            <div class="imu-sub-panel">
+              <span class="sub-kicker">LINEAR ACCELERATION (±2 g)</span>
+              <div class="axis-readout-strip">
+                <span>Ax: <b id="imuAx">--</b> g</span>
+                <span>Ay: <b id="imuAy">--</b> g</span>
+                <span>Az: <b id="imuAz">--</b> g</span>
+              </div>
+              <div class="axis-readout-strip">
+                <span>Total |A|: <b id="imuTotalAccel">--</b> g</span>
+                <span>Seq: <b id="imuSampleSeq">--</b></span>
+              </div>
+            </div>
+
+            <div class="imu-sub-panel">
+              <span class="sub-kicker">ANGULAR VELOCITY (±250 °/s)</span>
+              <div class="axis-readout-strip">
+                <span>Gx: <b id="imuGx">--</b> °/s</span>
+                <span>Gy: <b id="imuGy">--</b> °/s</span>
+                <span>Gz: <b id="imuGz">--</b> °/s</span>
+              </div>
+              <div class="axis-readout-strip">
+                <span>Total |ω|: <b id="imuTotalGyro">--</b> °/s</span>
+                <span>Range: <b>±250 °/s</b></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card-footer-notes">
+            <span>* MPU-6500 6-axis die verified on ESP32 #2 (I2C address 0x68). High-precision motion sensing active.</span>
+          </div>
+        </div>
+
         <!-- 3-Axis Magnetometer Waveform Card -->
         <div class="card-panel">
           <div class="card-inner-header">
@@ -495,8 +542,13 @@
             <span>Bz: <b id="magBz">41.2 µT</b></span>
             <button id="btnZeroBaselineInline" class="btn btn-tiny">Zero Baseline</button>
           </div>
+          <div id="magHardwareNotice" class="card-footer-notes" style="display: none; color: #f59e0b;">
+            <span>* Hardware Notice: MPU-6500 board has no internal AK8963 magnetometer. Magnetic classification uncalibrated.</span>
+          </div>
         </div>
+      </div>
 
+      <div class="grid-split-half">
         <!-- MTC-1 Classifier Card -->
         <div class="card-panel">
           <div class="card-inner-header">

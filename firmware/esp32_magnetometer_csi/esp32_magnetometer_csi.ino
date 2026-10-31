@@ -18,6 +18,7 @@
 #include <WiFiUdp.h>
 #include "esp_wifi.h"
 #include "mag_sensor_driver.h"
+#include "mpu6500_driver.h"
 
 // ── Configuration ────────────────────────────────────────────────────────────
 const char* AP_SSID         = "CSI_TEST";
@@ -85,6 +86,7 @@ void IRAM_ATTR wifi_csi_rx_callback(void* ctx, wifi_csi_info_t* data) {
 // ── Globals ──────────────────────────────────────────────────────────────────
 WiFiUDP udp;
 MagSensorDriver magDriver;
+MPU6500Driver imuDriver;
 unsigned long lastTelemetrySent = 0;
 unsigned long seqNum = 0;
 const unsigned long TELEMETRY_INTERVAL_MS = 50; // 20 Hz telemetry
@@ -103,6 +105,11 @@ void setup() {
                   magDriver.getChipName().c_str(),
                   magDriver.getIsSupported() ? "YES" : "NO (INCOMPATIBLE)",
                   sensorOk ? "SUCCESS" : "WARNING");
+
+    // Initialize MPU-6500 IMU on the existing shared I2C bus
+    bool imuOk = imuDriver.init(0x68);
+    Serial.printf("[IMU] MPU-6500 Init: %s (WHO_AM_I: 0x%02X)\n",
+                  imuOk ? "SUCCESS" : "UNAVAILABLE", imuDriver.getWhoAmI());
 
     // Initialize CSI Queue
     csiQueue = xQueueCreate(32, sizeof(CSIMetadata));
@@ -162,6 +169,7 @@ void loop() {
         seqNum++;
 
         MagReading mag = magDriver.read();
+        IMUReading imu = imuDriver.read();
 
         // Format subcarrier amplitudes string
         char scJson[160];
@@ -180,15 +188,42 @@ void loop() {
             snprintf(scJson, sizeof(scJson), "[]");
         }
 
-        char jsonPacket[512];
+        // Format IMU JSON snippet
+        char imuJson[320];
+        if (imuDriver.isAvailable() && imu.is_valid) {
+            snprintf(imuJson, sizeof(imuJson),
+                "\"imu\":{\"sensor\":\"%s\",\"available\":true,\"valid\":true,"
+                "\"ax\":%.4f,\"ay\":%.4f,\"az\":%.4f,\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f,"
+                "\"sample_seq\":%lu,\"timestamp_ms\":%lu},"
+                "\"ax\":%.4f,\"ay\":%.4f,\"az\":%.4f,\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f",
+                imuDriver.getSensorName(),
+                imu.ax, imu.ay, imu.az, imu.gx, imu.gy, imu.gz,
+                imu.sample_seq, imu.timestamp_ms,
+                imu.ax, imu.ay, imu.az, imu.gx, imu.gy, imu.gz
+            );
+        } else {
+            snprintf(imuJson, sizeof(imuJson),
+                "\"imu\":{\"sensor\":\"%s\",\"available\":%s,\"valid\":false,"
+                "\"ax\":null,\"ay\":null,\"az\":null,\"gx\":null,\"gy\":null,\"gz\":null,"
+                "\"sample_seq\":0,\"timestamp_ms\":0},"
+                "\"ax\":null,\"ay\":null,\"az\":null,\"gx\":null,\"gy\":null,\"gz\":null",
+                imuDriver.getSensorName(),
+                imuDriver.isAvailable() ? "true" : "false"
+            );
+        }
+
+        // Formulate telemetry JSON safely with 1024-byte capacity
+        char jsonPacket[1024];
         int ret = snprintf(jsonPacket, sizeof(jsonPacket),
             "{\"device_id\":\"esp32_mag_csi\",\"fw_ver\":\"1.0.0\",\"uptime_ms\":%lu,\"seq\":%lu,"
             "\"free_heap\":%u,\"rssi\":%d,\"csi_count\":%lu,\"subcarriers\":%s,\"packet_rate_hz\":20.0,"
-            "\"chip\":\"%s\",\"supported\":%s,\"bx\":%.2f,\"by\":%.2f,\"bz\":%.2f,\"unit\":\"uT\"}",
+            "\"chip\":\"%s\",\"supported\":%s,\"bx\":%.2f,\"by\":%.2f,\"bz\":%.2f,\"unit\":\"uT\","
+            "%s}",
             now, seqNum, (unsigned)ESP.getFreeHeap(), lastRssi, csiPacketCount, scJson,
             magDriver.getChipName().c_str(),
             magDriver.getIsSupported() ? "true" : "false",
-            mag.bx_uT, mag.by_uT, mag.bz_uT
+            mag.bx_uT, mag.by_uT, mag.bz_uT,
+            imuJson
         );
 
         if (ret > 0 && ret < (int)sizeof(jsonPacket)) {

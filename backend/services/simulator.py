@@ -22,6 +22,7 @@ from backend.schemas import (
     RadarTarget,
     WiFiMetrics,
     MagnetometerTelemetry,
+    IMUTelemetry,
     MTCInference
 )
 from backend.models.mtc1_loader import mtc1_service
@@ -249,6 +250,25 @@ class DemoSimulator:
             now_ts=now_ts
         )
 
+        # Simulated IMU (MPU-6500)
+        imu_telemetry = IMUTelemetry(
+            sensor_chip="SIMULATED_MPU6500",
+            is_available=True,
+            is_valid=True,
+            status="ONLINE",
+            ax=round(0.01 * math.sin(t * 1.5), 4),
+            ay=round(0.01 * math.cos(t * 1.2), 4),
+            az=round(0.981 + 0.005 * math.sin(t * 2.0), 4),
+            gx=round(0.2 * math.cos(t * 0.8), 2),
+            gy=round(0.2 * math.sin(t * 0.9), 2),
+            gz=round(0.1 * math.sin(t * 0.5), 2),
+            total_accel_g=0.981,
+            total_gyro_dps=0.25,
+            sample_seq=self.seq_esp32_mag,
+            device_timestamp_ms=int(t * 1000),
+            last_update_ts=now_ts
+        )
+
         return SystemConsolidatedState(
             timestamp=now_ts,
             is_demo_mode=True,
@@ -261,6 +281,7 @@ class DemoSimulator:
             wifi_radar_node=wifi_radar,
             wifi_mag_node=wifi_mag,
             magnetometer=mag_telemetry,
+            imu=imu_telemetry,
             mtc=mtc_result,
             fusion=fusion_result
         )

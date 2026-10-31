@@ -94,6 +94,23 @@ class MagnetometerTelemetry(BaseModel):
     unit: str = "uT"
     calibration_status: str = Field(default="UNCALIBRATED", description="UNCALIBRATED, CALIBRATED, INCOMPATIBLE")
 
+class IMUTelemetry(BaseModel):
+    sensor_chip: str = Field(default="UNKNOWN", description="Sensor identity, e.g. 'MPU6500' or 'MPU6050'")
+    is_available: bool = Field(default=False, description="True if physical IMU chip was detected and responding")
+    is_valid: bool = Field(default=False, description="True if latest reading was successfully decoded")
+    status: str = Field(default="UNAVAILABLE", description="Sensor operational status: ONLINE, STALE, UNAVAILABLE")
+    ax: Optional[float] = Field(default=None, description="Acceleration X in g (±2g range)")
+    ay: Optional[float] = Field(default=None, description="Acceleration Y in g (±2g range)")
+    az: Optional[float] = Field(default=None, description="Acceleration Z in g (±2g range)")
+    gx: Optional[float] = Field(default=None, description="Angular velocity X in deg/s (±250 deg/s range)")
+    gy: Optional[float] = Field(default=None, description="Angular velocity Y in deg/s (±250 deg/s range)")
+    gz: Optional[float] = Field(default=None, description="Angular velocity Z in deg/s (±250 deg/s range)")
+    total_accel_g: Optional[float] = Field(default=None, description="Magnitude sqrt(ax^2 + ay^2 + az^2) in g")
+    total_gyro_dps: Optional[float] = Field(default=None, description="Magnitude sqrt(gx^2 + gy^2 + gz^2) in deg/s")
+    sample_seq: Optional[int] = Field(default=None, description="Monotonically increasing IMU sample sequence number")
+    device_timestamp_ms: Optional[int] = Field(default=None, description="Device uptime timestamp of sample in ms")
+    last_update_ts: Optional[float] = Field(default=None, description="Host epoch timestamp of last valid IMU reading")
+
 class MTCInference(BaseModel):
     status: str = Field(
         default="AWAITING_RANGE", 
@@ -150,6 +167,7 @@ class TelemetryPacket(BaseModel):
     wifi: Optional[WiFiMetrics] = None
     radar: Optional[RadarTelemetry] = None
     magnetometer: Optional[MagnetometerTelemetry] = None
+    imu: Optional[IMUTelemetry] = None
     mtc: Optional[MTCInference] = None
 
 class SystemConsolidatedState(BaseModel):
@@ -164,6 +182,7 @@ class SystemConsolidatedState(BaseModel):
     wifi_radar_node: Optional[WiFiMetrics] = None
     wifi_mag_node: Optional[WiFiMetrics] = None
     magnetometer: MagnetometerTelemetry = Field(default_factory=MagnetometerTelemetry)
+    imu: IMUTelemetry = Field(default_factory=IMUTelemetry)
     mtc: MTCInference = Field(default_factory=MTCInference)
     fusion: FusionState = Field(default_factory=FusionState)
     # Physical sensor spatial calibration positions (in meters)

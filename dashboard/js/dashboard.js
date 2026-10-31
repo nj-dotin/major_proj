@@ -321,8 +321,68 @@ document.addEventListener('DOMContentLoaded', () => {
       fusionUncertaintyText.textContent = fusion.uncertainty_note || 'Wi-Fi reflects multipath distortion only; coordinates originate strictly from LD2450 radar.';
     }
 
-    // E. Magnetometer & MTC-1
+    // E. IMU (MPU-6500)
+    const imu = state.imu || {};
+    const imuSensorChipBadge = document.getElementById('imuSensorChipBadge');
+    if (imuSensorChipBadge) {
+      imuSensorChipBadge.textContent = imu.sensor_chip || 'MPU6500';
+    }
+
+    const imuStatusBadge = document.getElementById('imuStatusBadge');
+    if (imuStatusBadge) {
+      const status = imu.status || (imu.is_valid ? 'ONLINE' : (imu.is_available ? 'STALE' : 'UNAVAILABLE'));
+      imuStatusBadge.textContent = status;
+      if (status === 'ONLINE') {
+        imuStatusBadge.className = 'badge badge-emerald';
+      } else if (status === 'STALE') {
+        imuStatusBadge.className = 'badge badge-amber';
+      } else {
+        imuStatusBadge.className = 'badge badge-danger';
+      }
+    }
+
+    const imuFreshness = document.getElementById('imuFreshness');
+    if (imuFreshness) {
+      if (imu.last_update_ts) {
+        const ageSec = Math.max(0, (Date.now() / 1000 - imu.last_update_ts)).toFixed(1);
+        imuFreshness.textContent = `${ageSec}s ago`;
+      } else {
+        imuFreshness.textContent = imu.is_valid ? 'Active' : 'Offline';
+      }
+    }
+
+    const imuAx = document.getElementById('imuAx');
+    const imuAy = document.getElementById('imuAy');
+    const imuAz = document.getElementById('imuAz');
+    const imuTotalAccel = document.getElementById('imuTotalAccel');
+    const imuSampleSeq = document.getElementById('imuSampleSeq');
+
+    if (imuAx) imuAx.textContent = (imu.is_valid && typeof imu.ax === 'number') ? `${imu.ax >= 0 ? '+' : ''}${imu.ax.toFixed(3)}` : '--';
+    if (imuAy) imuAy.textContent = (imu.is_valid && typeof imu.ay === 'number') ? `${imu.ay >= 0 ? '+' : ''}${imu.ay.toFixed(3)}` : '--';
+    if (imuAz) imuAz.textContent = (imu.is_valid && typeof imu.az === 'number') ? `${imu.az >= 0 ? '+' : ''}${imu.az.toFixed(3)}` : '--';
+    if (imuTotalAccel) imuTotalAccel.textContent = (imu.is_valid && typeof imu.total_accel_g === 'number') ? `${imu.total_accel_g.toFixed(3)}` : '--';
+    if (imuSampleSeq) imuSampleSeq.textContent = (imu.sample_seq !== null && imu.sample_seq !== undefined) ? `#${imu.sample_seq}` : '--';
+
+    const imuGx = document.getElementById('imuGx');
+    const imuGy = document.getElementById('imuGy');
+    const imuGz = document.getElementById('imuGz');
+    const imuTotalGyro = document.getElementById('imuTotalGyro');
+
+    if (imuGx) imuGx.textContent = (imu.is_valid && typeof imu.gx === 'number') ? `${imu.gx >= 0 ? '+' : ''}${imu.gx.toFixed(1)}` : '--';
+    if (imuGy) imuGy.textContent = (imu.is_valid && typeof imu.gy === 'number') ? `${imu.gy >= 0 ? '+' : ''}${imu.gy.toFixed(1)}` : '--';
+    if (imuGz) imuGz.textContent = (imu.is_valid && typeof imu.gz === 'number') ? `${imu.gz >= 0 ? '+' : ''}${imu.gz.toFixed(1)}` : '--';
+    if (imuTotalGyro) imuTotalGyro.textContent = (imu.is_valid && typeof imu.total_gyro_dps === 'number') ? `${imu.total_gyro_dps.toFixed(1)}` : '--';
+
+    // F. Magnetometer & MTC-1
     const mag = state.magnetometer || {};
+    const magHardwareNotice = document.getElementById('magHardwareNotice');
+    if (magHardwareNotice) {
+      if (mag.is_supported === false || mag.sensor_chip === 'MPU6500_NO_MAG') {
+        magHardwareNotice.style.display = 'block';
+      } else {
+        magHardwareNotice.style.display = 'none';
+      }
+    }
     magChart.push({
       bx: mag.bx,
       by: mag.by,

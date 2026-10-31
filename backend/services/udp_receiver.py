@@ -12,6 +12,7 @@ Updates live system consolidated state and feeds the telemetry buffer.
 import asyncio
 import json
 import logging
+import math
 import time
 from typing import Optional, Callable
 from backend.config import settings
@@ -21,7 +22,8 @@ from backend.schemas import (
     RadarTelemetry, 
     RadarTarget,
     WiFiMetrics, 
-    MagnetometerTelemetry
+    MagnetometerTelemetry,
+    IMUTelemetry
 )
 from backend.parsers.ld2450 import LD2450StreamParser, LD2450Tracker
 from backend.parsers.magnetometer import MagnetometerProcessor
@@ -84,6 +86,7 @@ class LiveHardwareStateManager:
         self.current_state = SystemConsolidatedState(is_demo_mode=False)
         self.last_update_radar = 0.0
         self.last_update_mag = 0.0
+        self.last_update_imu = 0.0
         self.last_update_ap = 0.0
         self.last_update_wifi = 0.0
         self.last_update_wifi_radar = 0.0
@@ -269,6 +272,93 @@ class LiveHardwareStateManager:
                 receiver_id="rx2"
             )
 
+            # IMU (MPU-6500 6-Axis Accelerometer + Gyroscope)
+            try:
+                imu_payload = payload.get("imu") if isinstance(payload.get("imu"), dict) else {}
+                
+                # Check sensor identity and availability
+                sensor_chip = imu_payload.get("sensor", payload.get("imu_sensor", "MPU6500"))
+                is_avail = bool(imu_payload.get("available", payload.get("imu_available", False)))
+                is_valid_flag = bool(imu_payload.get("valid", payload.get("imu_valid", is_avail)))
+
+                # Coordinates from imu object or fallback to root fields
+                raw_ax = imu_payload.get("ax", payload.get("ax"))
+                raw_ay = imu_payload.get("ay", payload.get("ay"))
+                raw_az = imu_payload.get("az", payload.get("az"))
+                raw_gx = imu_payload.get("gx", payload.get("gx"))
+                raw_gy = imu_payload.get("gy", payload.get("gy"))
+                raw_gz = imu_payload.get("gz", payload.get("gz"))
+
+                # Robust helper: parses finite float within safe mechanical limits
+                def _parse_safe_float(val, min_v, max_v):
+                    if val is None:
+                        return None
+                    try:
+                        f = float(val)
+                        if not math.isfinite(f):
+                            return None
+                        if f < min_v or f > max_v:
+                            return None
+                        return f
+                    except (ValueError, TypeError):
+                        return None
+
+                ax = _parse_safe_float(raw_ax, -16.0, 16.0)     # ±2g standard range, allow shock margin
+                ay = _parse_safe_float(raw_ay, -16.0, 16.0)
+                az = _parse_safe_float(raw_az, -16.0, 16.0)
+                gx = _parse_safe_float(raw_gx, -2000.0, 2000.0) # ±250 dps standard range, allow shock margin
+                gy = _parse_safe_float(raw_gy, -2000.0, 2000.0)
+                gz = _parse_safe_float(raw_gz, -2000.0, 2000.0)
+
+                has_readings = all(v is not None for v in (ax, ay, az, gx, gy, gz))
+
+                if is_avail and has_readings and is_valid_flag:
+                    self.last_update_imu = now
+                    total_accel = math.sqrt(ax * ax + ay * ay + az * az)
+                    total_gyro = math.sqrt(gx * gx + gy * gy + gz * gz)
+                    sample_seq = imu_payload.get("sample_seq", payload.get("sample_seq", seq))
+                    device_ts = imu_payload.get("timestamp_ms", payload.get("timestamp_ms", uptime_ms))
+
+                    self.current_state.imu = IMUTelemetry(
+                        sensor_chip=str(sensor_chip) if sensor_chip else "MPU6500",
+                        is_available=True,
+                        is_valid=True,
+                        status="ONLINE",
+                        ax=round(ax, 4),
+                        ay=round(ay, 4),
+                        az=round(az, 4),
+                        gx=round(gx, 2),
+                        gy=round(gy, 2),
+                        gz=round(gz, 2),
+                        total_accel_g=round(total_accel, 4),
+                        total_gyro_dps=round(total_gyro, 2),
+                        sample_seq=int(sample_seq) if sample_seq is not None else None,
+                        device_timestamp_ms=int(device_ts) if device_ts is not None else None,
+                        last_update_ts=now
+                    )
+                elif is_avail and not has_readings:
+                    # Sensor present on bus but latest read failed
+                    prev_ts = self.last_update_imu if self.last_update_imu > 0 else None
+                    self.current_state.imu = IMUTelemetry(
+                        sensor_chip=str(sensor_chip) if sensor_chip else "MPU6500",
+                        is_available=True,
+                        is_valid=False,
+                        status="STALE" if (prev_ts and (now - prev_ts) < 10.0) else "UNAVAILABLE",
+                        last_update_ts=prev_ts
+                    )
+                else:
+                    # Sensor not available or not reported
+                    prev_ts = self.last_update_imu if self.last_update_imu > 0 else None
+                    self.current_state.imu = IMUTelemetry(
+                        sensor_chip=str(sensor_chip) if sensor_chip else "UNKNOWN",
+                        is_available=False,
+                        is_valid=False,
+                        status="UNAVAILABLE",
+                        last_update_ts=prev_ts
+                    )
+            except Exception as e:
+                logger.warning(f"Error parsing IMU telemetry: {e}")
+
         # Update active devices list
         active = []
         if (now - self.last_update_ap) < 3.0 and self.current_state.node_ap:
@@ -278,6 +368,13 @@ class LiveHardwareStateManager:
         if (now - self.last_update_mag) < 3.0 and self.current_state.node_mag:
             active.append("esp32_mag_csi")
         self.current_state.active_devices = active
+
+        # Check IMU staleness if node_mag went quiet
+        if self.current_state.imu and self.current_state.imu.status == "ONLINE":
+            if (now - self.last_update_imu) > 3.0:
+                self.current_state.imu.status = "STALE"
+            if (now - self.last_update_imu) > 10.0:
+                self.current_state.imu.status = "UNAVAILABLE"
 
         # Compute range for MTC-1 from radar if available
         closest_range: Optional[float] = None
